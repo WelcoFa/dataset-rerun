@@ -1,0 +1,63 @@
+# ========================
+# DATASET FILES
+# ========================
+
+# images / videos
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.png
+*.jpg
+*.jpeg
+
+# meshes
+*.obj
+*.ply
+*.glb
+*.gltf
+*.fbx
+*.vrs
+
+# large data
+*.h5
+*.hdf5
+*.npz
+*.npy
+
+# models
+*.pt
+*.pth
+*.ckpt
+
+# ========================
+# DATASET FOLDERS
+# ========================
+
+*/images/
+*/rgb/
+*/rgb_vid/
+*/depth/
+*/video/
+
+# ========================
+# PYTHON
+# ========================
+
+__pycache__/
+*.pyc
+
+# ========================
+# ENV
+# ========================
+
+venv/
+.env
+.venv
+
+# ========================
+# IDE
+# ========================
+
+.vscode/
+.idea/
