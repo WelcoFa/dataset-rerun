@@ -18,15 +18,23 @@ from qwen_vl_utils import process_vision_info
 # Config
 # ============================================================
 
+BASE_DIR = Path(__file__).resolve().parent
+
 SCENE_NAME = "p36-tea-0010"
+CAM_NAME = "brics-odroid-010_cam0"
+VIDEO_STEM = "brics-odroid-010_cam0_1727030430697198"
 
-VIDEO_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\rgb_vid\brics-odroid-010_cam0\brics-odroid-010_cam0_1727030430697198.mp4"
+VIDEO_PATH = (
+    BASE_DIR
+    / "gigahands_demo_all"
+    / "hand_pose"
+    / SCENE_NAME
+    / "rgb_vid"
+    / CAM_NAME
+    / f"{VIDEO_STEM}.mp4"
 )
 
-OUTPUT_DIR = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\annotations"
-)
+OUTPUT_DIR = BASE_DIR / "annotations"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 OUTPUT_STEPS_PATH = OUTPUT_DIR / f"pred_steps_{SCENE_NAME}.json"
