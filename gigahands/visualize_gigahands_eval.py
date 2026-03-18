@@ -9,6 +9,7 @@ from scipy.interpolate import interp1d
 from scipy.spatial.transform import Rotation, Slerp
 
 
+
 # =========================
 # Config
 # =========================
@@ -24,44 +25,113 @@ HAND_BONES = [
 USE_SMOOTHER = True
 SMOOTH_WINDOW = 1
 
-VIDEO_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\rgb_vid\brics-odroid-010_cam0\brics-odroid-010_cam0_1727030430697198.mp4"
+BASE_DIR = Path(__file__).resolve().parent
+
+SEQ_NAME = "p36-tea-0010"
+CAM_NAME = "brics-odroid-010_cam0"
+FRAME_ID = "1727030430697198"   # 你的那一帧
+
+# =========================
+# Video
+# =========================
+VIDEO_PATH = (
+    BASE_DIR
+    / "gigahands_demo_all"
+    / "hand_pose"
+    / SEQ_NAME
+    / "rgb_vid"
+    / CAM_NAME
+    / f"{CAM_NAME}_{FRAME_ID}.mp4"
 )
 
-LEFT_2D_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\keypoints_2d\left\010\brics-odroid-010_cam0_1727030430697198.jsonl"
+# =========================
+# 2D keypoints
+# =========================
+LEFT_2D_PATH = (
+    BASE_DIR
+    / "gigahands_demo_all"
+    / "hand_pose"
+    / SEQ_NAME
+    / "keypoints_2d"
+    / "left"
+    / "010"
+    / f"{CAM_NAME}_{FRAME_ID}.jsonl"
 )
 
-RIGHT_2D_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\keypoints_2d\right\010\brics-odroid-010_cam0_1727030430697198.jsonl"
+RIGHT_2D_PATH = (
+    BASE_DIR
+    / "gigahands_demo_all"
+    / "hand_pose"
+    / SEQ_NAME
+    / "keypoints_2d"
+    / "right"
+    / "010"
+    / f"{CAM_NAME}_{FRAME_ID}.jsonl"
 )
 
-LEFT_3D_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\keypoints_3d\010\left.jsonl"
+# =========================
+# 3D keypoints
+# =========================
+LEFT_3D_PATH = (
+    BASE_DIR
+    / "gigahands_demo_all"
+    / "hand_pose"
+    / SEQ_NAME
+    / "keypoints_3d"
+    / "010"
+    / "left.jsonl"
 )
 
-RIGHT_3D_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\keypoints_3d\010\right.jsonl"
+RIGHT_3D_PATH = (
+    BASE_DIR
+    / "gigahands_demo_all"
+    / "hand_pose"
+    / SEQ_NAME
+    / "keypoints_3d"
+    / "010"
+    / "right.jsonl"
 )
 
-MESH_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\dataset\gigahands\scans_publish\publish\0_tea\teapot_without_lid\teapot_without_lid.obj"
+# =========================
+# Mesh（你现在用这个）
+# =========================
+MESH_PATH = (
+    BASE_DIR
+    / "gigahands_demo_all"
+    / "object_pose"
+    / SEQ_NAME
+    / "pose"
+    / "teapot_with_lid.obj"
 )
 
-POSE_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\object_pose\p36-tea-0010\pose\optimized_pose.json"
+# =========================
+# Pose
+# =========================
+POSE_PATH = (
+    BASE_DIR
+    / "gigahands_demo_all"
+    / "object_pose"
+    / SEQ_NAME
+    / "pose"
+    / "optimized_pose.json"
 )
 
-GT_STEPS_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\annotations\gt_steps_p36-tea-0010.json"
+# =========================
+# Steps
+# =========================
+GT_STEPS_PATH = (
+    BASE_DIR
+    / "annotations"
+    / f"gt_steps_{SEQ_NAME}.json"
 )
 
-PRED_STEPS_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\annotations\pred_steps_p36-tea-0010.json"
+PRED_STEPS_PATH = (
+    BASE_DIR
+    / "annotations"
+    / f"pred_steps_{SEQ_NAME}.json"
 )
 
 SCENE_NAME = "scene_gigahands"
-
 
 # =========================
 # IO helpers
