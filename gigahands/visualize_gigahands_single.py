@@ -8,19 +8,33 @@ import trimesh
 from scipy.spatial.transform import Rotation
 
 
-# ============================================================
+BASE_DIR = Path(__file__).resolve().parent
+
+# =========================
 # Paths
-# ============================================================
-HAND_SEQ_ROOT = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010"
+# =========================
+
+HAND_SEQ_ROOT = (
+    BASE_DIR
+    / "gigahands_demo_all"
+    / "hand_pose"
+    / "p36-tea-0010"
 )
 
-OBJECT_POSE_ROOT = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\object_pose\p36-tea-0010"
+OBJECT_POSE_ROOT = (
+    BASE_DIR
+    / "gigahands_demo_all"
+    / "object_pose"
+    / "p36-tea-0010"
 )
 
-OBJECT_MESH_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\dataset\gigahands\scans_publish\publish\0_tea\teapot_without_lid\teapot_without_lid.obj"
+OBJECT_MESH_PATH = (
+    BASE_DIR
+    / "gigahands_demo_all"
+    / "object_pose"
+    / "p36-tea-0010"
+    / "pose"
+    / "teapot_with_lid.obj"
 )
 
 CAM_NAME = "brics-odroid-010_cam0"
