@@ -24,11 +24,18 @@
 *.hdf5
 *.npz
 *.npy
+*.pkl
+*.zip
+*.parquet
+*.db
 
 # models
 *.pt
 *.pth
 *.ckpt
+
+# experiment outputs
+*.rrd
 
 # ========================
 # DATASET FOLDERS
@@ -39,21 +46,74 @@
 */rgb_vid/
 */depth/
 */video/
+*/thermal/
+*/masks/
+*/annotations/
+*/ground_truth/
+*/mano_models/
+*/hot3d_models/
+*/object_models/
+*/object_models_eval/
+*/object_ref_aria_dynamic/
+*/object_ref_aria_static/
+*/hand_pose/
+*/.cache/
+
+# repo-specific dataset roots
+/data/
+
+/Being-h0/h0_post_train_db_2508/**
+!/Being-h0/h0_post_train_db_2508/
+!/Being-h0/h0_post_train_db_2508/.gitattributes
+!/Being-h0/h0_post_train_db_2508/LICENSE
+!/Being-h0/h0_post_train_db_2508/README.md
+!/Being-h0/h0_post_train_db_2508/pick_duck_blue_lerobot/
+!/Being-h0/h0_post_train_db_2508/pick_duck_blue_lerobot/visualize_beingh0_rerun.py
+
+/HOT3D/hot3d_demo_full/P0001_10a27bf7/
+/HOT3D/hot3d_demo_full/clip_definitions.json
+/HOT3D/hot3d_demo_full/clip_splits.json
+/HOT3D/hot3d_demo_full/hot3d_base/
+/HOT3D/hot3d_demo_full/hot3d_models/
+/HOT3D/hot3d_demo_full/mano_models/
+/HOT3D/hot3d_demo_full/object_models/
+/HOT3D/hot3d_demo_full/object_models_eval/
+/HOT3D/hot3d_demo_full/object_ref_aria_dynamic/
+/HOT3D/hot3d_demo_full/object_ref_aria_static/
+
+/gigahands/annotations/
+/gigahands/gigahands_demo_all/
+/gigahands/output.txt
+/thermohands/Thermohands/
+/dexwild/robot_pour_data.hdf5
 
 # ========================
 # PYTHON
 # ========================
 
 __pycache__/
+**/__pycache__/
 *.pyc
+*.pyo
+*.pyd
 
 # ========================
-# ENV
+# ENV / LOCAL
 # ========================
 
-venv/
 .env
-.venv
+.env.*
+.python-version
+.venv/
+venv/
+env/
+**/.venv/
+**/venv/
+**/env/
+**/.venv.venv/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
 
 # ========================
 # IDE

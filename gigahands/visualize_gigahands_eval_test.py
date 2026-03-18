@@ -23,43 +23,39 @@ HAND_BONES = [
 USE_SMOOTHER = True
 SMOOTH_WINDOW = 1
 
-VIDEO_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\rgb_vid\brics-odroid-010_cam0\brics-odroid-010_cam0_1727030430697198.mp4"
-)
+BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
+DATA_ROOT = REPO_ROOT / "data" / "gigahands"
+GIGAHANDS_ROOT = DATA_ROOT / "gigahands_demo_all"
+ANNOTATIONS_DIR = DATA_ROOT / "annotations"
+SUPPORTED_MESH_EXTENSIONS = (".obj", ".ply", ".glb", ".gltf", ".stl")
 
-LEFT_2D_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\keypoints_2d\left\010\brics-odroid-010_cam0_1727030430697198.jsonl"
-)
-
-RIGHT_2D_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\keypoints_2d\right\010\brics-odroid-010_cam0_1727030430697198.jsonl"
-)
-
-LEFT_3D_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\keypoints_3d\010\left.jsonl"
-)
-
-RIGHT_3D_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\keypoints_3d\010\right.jsonl"
-)
-
-MESH_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\dataset\gigahands\scans_publish\publish\0_tea\teapot_without_lid\teapot_without_lid.obj"
-)
-
-POSE_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\object_pose\p36-tea-0010\pose\optimized_pose.json"
-)
-
-GT_STEPS_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\annotations\gt_steps_p36-tea-0010.json"
-)
-
-PRED_STEPS_PATH = Path(
-    r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\annotations\pred_steps_p36-tea-0010.json"
-)
+VIDEO_PATH = GIGAHANDS_ROOT / "hand_pose" / "p36-tea-0010" / "rgb_vid" / "brics-odroid-010_cam0" / "brics-odroid-010_cam0_1727030430697198.mp4"
+LEFT_2D_PATH = GIGAHANDS_ROOT / "hand_pose" / "p36-tea-0010" / "keypoints_2d" / "left" / "010" / "brics-odroid-010_cam0_1727030430697198.jsonl"
+RIGHT_2D_PATH = GIGAHANDS_ROOT / "hand_pose" / "p36-tea-0010" / "keypoints_2d" / "right" / "010" / "brics-odroid-010_cam0_1727030430697198.jsonl"
+LEFT_3D_PATH = GIGAHANDS_ROOT / "hand_pose" / "p36-tea-0010" / "keypoints_3d" / "010" / "left.jsonl"
+RIGHT_3D_PATH = GIGAHANDS_ROOT / "hand_pose" / "p36-tea-0010" / "keypoints_3d" / "010" / "right.jsonl"
+MESH_PATH = GIGAHANDS_ROOT / "object_pose" / "p36-tea-0010" / "mesh"
+POSE_PATH = GIGAHANDS_ROOT / "object_pose" / "p36-tea-0010" / "pose" / "optimized_pose.json"
+GT_STEPS_PATH = ANNOTATIONS_DIR / "gt_steps_p36-tea-0010.json"
+PRED_STEPS_PATH = ANNOTATIONS_DIR / "pred_steps_p36-tea-0010.json"
 
 SCENE_NAME = "scene_gigahands"
+
+
+def resolve_mesh_path(mesh_root: Path) -> Path:
+    if mesh_root.is_file():
+        return mesh_root
+
+    for ext in SUPPORTED_MESH_EXTENSIONS:
+        matches = sorted(mesh_root.rglob(f"*{ext}"))
+        if matches:
+            return matches[0]
+
+    raise FileNotFoundError(
+        f"No mesh file found under {mesh_root}. "
+        f"Expected one of: {', '.join(SUPPORTED_MESH_EXTENSIONS)}"
+    )
 
 
 # =========================
@@ -94,7 +90,7 @@ def load_3d(path: Path):
 
 
 def load_mesh(path: Path):
-    mesh = trimesh.load(path, process=False)
+    mesh = trimesh.load(resolve_mesh_path(path), process=False)
 
     if isinstance(mesh, trimesh.Scene):
         if len(mesh.geometry) == 0:

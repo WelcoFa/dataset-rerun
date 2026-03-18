@@ -7,13 +7,15 @@ import rerun as rr
 import trimesh
 
 
-ROOT = Path(__file__).resolve().parent
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
+DATA_ROOT = REPO_ROOT / "data" / "HOT3D" / "hot3d_demo_full"
 SEQUENCE_NAME = "P0001_10a27bf7"
 
-SEQUENCE_DIR = ROOT / SEQUENCE_NAME
+SEQUENCE_DIR = DATA_ROOT / SEQUENCE_NAME
 HAND_DIR = SEQUENCE_DIR / "hand_data"
 GT_DIR = SEQUENCE_DIR / "ground_truth"
-OBJECT_MODELS_DIR = ROOT / "object_models"
+OBJECT_MODELS_DIR = DATA_ROOT / "object_models"
 
 FRAME_STRIDE = 5
 

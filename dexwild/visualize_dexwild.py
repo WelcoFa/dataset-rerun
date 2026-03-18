@@ -5,13 +5,17 @@ import h5py
 import numpy as np
 import rerun as rr
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+DEFAULT_HDF5 = REPO_ROOT / "data" / "dexwild" / "robot_pour_data.hdf5"
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Preview DexWild HDF5 episode in Rerun.")
     parser.add_argument(
         "--hdf5",
         type=str,
-        default="robot_pour_data.hdf5",
+        default=str(DEFAULT_HDF5),
         help="Path to DexWild HDF5 file",
     )
     parser.add_argument(

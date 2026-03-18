@@ -9,28 +9,28 @@ from scipy.spatial.transform import Rotation
 
 
 BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
+DATA_ROOT = REPO_ROOT / "data" / "gigahands"
+GIGAHANDS_ROOT = DATA_ROOT / "gigahands_demo_all"
 
 # =========================
 # Paths
 # =========================
 
 HAND_SEQ_ROOT = (
-    BASE_DIR
-    / "gigahands_demo_all"
+    GIGAHANDS_ROOT
     / "hand_pose"
     / "p36-tea-0010"
 )
 
 OBJECT_POSE_ROOT = (
-    BASE_DIR
-    / "gigahands_demo_all"
+    GIGAHANDS_ROOT
     / "object_pose"
     / "p36-tea-0010"
 )
 
 OBJECT_MESH_PATH = (
-    BASE_DIR
-    / "gigahands_demo_all"
+    GIGAHANDS_ROOT
     / "object_pose"
     / "p36-tea-0010"
     / "pose"

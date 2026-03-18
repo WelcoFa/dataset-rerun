@@ -20,66 +20,50 @@ HAND_BONES = [
 USE_SMOOTHER = True
 SMOOTH_WINDOW = 9
 
+BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
+DATA_ROOT = REPO_ROOT / "data" / "gigahands"
+GIGAHANDS_ROOT = DATA_ROOT / "gigahands_demo_all"
+SUPPORTED_MESH_EXTENSIONS = (".obj", ".ply", ".glb", ".gltf", ".stl")
+
+
+def resolve_mesh_path(mesh_root: Path) -> Path:
+    if mesh_root.is_file():
+        return mesh_root
+
+    for ext in SUPPORTED_MESH_EXTENSIONS:
+        matches = sorted(mesh_root.rglob(f"*{ext}"))
+        if matches:
+            return matches[0]
+
+    raise FileNotFoundError(
+        f"No mesh file found under {mesh_root}. "
+        f"Expected one of: {', '.join(SUPPORTED_MESH_EXTENSIONS)}"
+    )
+
 
 SCENES = [
     {
         "name": "scene_tea",
-        "video_path": Path(
-            r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\rgb_vid\brics-odroid-010_cam0\brics-odroid-010_cam0_1727030430697198.mp4"
-        ),
-        "left_2d_path": Path(
-            r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\keypoints_2d\left\010\brics-odroid-010_cam0_1727030430697198.jsonl"
-        ),
-        "right_2d_path": Path(
-            r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\keypoints_2d\right\010\brics-odroid-010_cam0_1727030430697198.jsonl"
-        ),
-        "left_3d_path": Path(
-            r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\keypoints_3d\010\left.jsonl"
-        ),
-        "right_3d_path": Path(
-            r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p36-tea-0010\keypoints_3d\010\right.jsonl"
-        ),
-        "mesh_path": Path(
-            r"C:\Users\WelcoFa\Desktop\相能\dataset\gigahands\scans_publish\publish\0_tea\teapot_without_lid\teapot_without_lid.obj"
-        ),
-        "pose_path": Path(
-            r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\object_pose\p36-tea-0010\pose\optimized_pose.json"
-        ),
+        "video_path": GIGAHANDS_ROOT / "hand_pose" / "p36-tea-0010" / "rgb_vid" / "brics-odroid-010_cam0" / "brics-odroid-010_cam0_1727030430697198.mp4",
+        "left_2d_path": GIGAHANDS_ROOT / "hand_pose" / "p36-tea-0010" / "keypoints_2d" / "left" / "010" / "brics-odroid-010_cam0_1727030430697198.jsonl",
+        "right_2d_path": GIGAHANDS_ROOT / "hand_pose" / "p36-tea-0010" / "keypoints_2d" / "right" / "010" / "brics-odroid-010_cam0_1727030430697198.jsonl",
+        "left_3d_path": GIGAHANDS_ROOT / "hand_pose" / "p36-tea-0010" / "keypoints_3d" / "010" / "left.jsonl",
+        "right_3d_path": GIGAHANDS_ROOT / "hand_pose" / "p36-tea-0010" / "keypoints_3d" / "010" / "right.jsonl",
+        "mesh_path": GIGAHANDS_ROOT / "object_pose" / "p36-tea-0010" / "mesh",
+        "pose_path": GIGAHANDS_ROOT / "object_pose" / "p36-tea-0010" / "pose" / "optimized_pose.json",
     },
     {
         "name": "scene_boxing",
-
-        "video_path": Path(
-            r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p41-boxing-0021\rgb_vid\brics-odroid-001_cam0\brics-odroid-001_cam0_1726962101790659.mp4"
-        ),
-
-        "left_2d_path": Path(
-            r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p41-boxing-0021\keypoints_2d\left\021\brics-odroid-001_cam0_1726962101790659.jsonl"
-        ),
-
-        "right_2d_path": Path(
-            r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p41-boxing-0021\keypoints_2d\right\021\brics-odroid-001_cam0_1726962101790659.jsonl"
-        ),
-
-        "left_3d_path": Path(
-            r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p41-boxing-0021\keypoints_3d\021\left.jsonl"
-        ),
-
-        "right_3d_path": Path(
-            r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\hand_pose\p41-boxing-0021\keypoints_3d\021\right.jsonl"
-        ),
-
-        "mesh_path": Path(
-        r"C:\Users\WelcoFa\Desktop\相能\dataset\gigahands\scans_publish\publish\18_boxing\boxing_bag_stand_base\boxing-bag-stand-base.obj"
-        ),
-
-        "pose_path": Path(
-            r"C:\Users\WelcoFa\Desktop\相能\rerun\gigahands\gigahands_demo_all\object_pose\p41-boxing-0021\pose\optimized_pose.json"
-        ),
-
+        "video_path": GIGAHANDS_ROOT / "hand_pose" / "p41-boxing-0021" / "rgb_vid" / "brics-odroid-001_cam0" / "brics-odroid-001_cam0_1726962101790659.mp4",
+        "left_2d_path": GIGAHANDS_ROOT / "hand_pose" / "p41-boxing-0021" / "keypoints_2d" / "left" / "021" / "brics-odroid-001_cam0_1726962101790659.jsonl",
+        "right_2d_path": GIGAHANDS_ROOT / "hand_pose" / "p41-boxing-0021" / "keypoints_2d" / "right" / "021" / "brics-odroid-001_cam0_1726962101790659.jsonl",
+        "left_3d_path": GIGAHANDS_ROOT / "hand_pose" / "p41-boxing-0021" / "keypoints_3d" / "021" / "left.jsonl",
+        "right_3d_path": GIGAHANDS_ROOT / "hand_pose" / "p41-boxing-0021" / "keypoints_3d" / "021" / "right.jsonl",
+        "mesh_path": GIGAHANDS_ROOT / "object_pose" / "p41-boxing-0021" / "mesh",
+        "pose_path": GIGAHANDS_ROOT / "object_pose" / "p41-boxing-0021" / "pose" / "optimized_pose.json",
     },
 ]
-
 
 def load_jsonl(path):
     data = []
@@ -110,7 +94,7 @@ def load_3d(path):
 
 
 def load_mesh(path):
-    mesh = trimesh.load(path, process=False)
+    mesh = trimesh.load(resolve_mesh_path(path), process=False)
     if isinstance(mesh, trimesh.Scene):
         mesh = list(mesh.geometry.values())[0]
     vertices = np.asarray(mesh.vertices, dtype=np.float32)

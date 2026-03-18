@@ -8,13 +8,23 @@ import cv2
 import numpy as np
 import rerun as rr
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[2]
+DEFAULT_SUBSET_DIR = (
+    REPO_ROOT
+    / "data"
+    / "Being-h0"
+    / "h0_post_train_db_2508"
+    / "pick_duck_blue_lerobot"
+)
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Visualize Being-H0 subset with Rerun")
     parser.add_argument(
         "--subset-dir",
         type=str,
-        default=".",
+        default=str(DEFAULT_SUBSET_DIR),
         help="Path to one subset folder. Default is current folder.",
     )
     parser.add_argument(
