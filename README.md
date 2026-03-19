@@ -54,8 +54,42 @@ data/      dataset payloads, ignored by git
 - `scripts/visualize_hot3d_mano_albedo.py`
 - `scripts/visualize_hot3d_skeleton.py`
 
+## GigaHands Workflow
+
+The current GigaHands workflow has three layers:
+
+- `scripts/visualize_gigahands_single_scene.py` for scene inspection with RGB, 2D hands, 3D hands, and object pose
+- `scripts/run_gigahands_vlm.py` for clip-level semantic prediction with fields such as `main_task`, `sub_task`, `interaction`, `objects`, and `current_action`
+- `scripts/visualize_gigahands_eval_test.py` for a ROPedia-style semantic viewer that reads generated annotation JSONs and shows:
+  - `Main Task`
+  - `Sub Task`
+  - `Interaction`
+  - `Objects`
+  - `Current Action`
+  - `Task Timeline`
+
+The generated GigaHands annotation files live under `data/gigahands/annotations/`, for example:
+
+- `pred_raw_clips_p36-tea-0010.json`
+- `pred_steps_p36-tea-0010.json`
+
+The eval-test viewer uses:
+
+- raw clip predictions for the live semantic panels
+- merged step predictions for the task timeline
+- GT steps only when they are present
+
+For the VLM workflow, install the extra dependencies first:
+
+```powershell
+uv sync --extra gigahands-vlm
+```
+
+If you want GPU inference with PyTorch on Windows, install a CUDA-enabled PyTorch build instead of the CPU-only default wheel.
+
 ## Notes
 
 - The repo defaults to relative paths under `data/`.
 - The maintained public scripts also support absolute dataset roots through CLI options such as `--data-root`, which is useful when your payloads live on a local NAS.
 - Some moved GigaHands variants are still present in `scripts/`, but they should be treated as experimental until their CLIs are normalized the same way as the public entrypoints.
+- The GigaHands evaluation viewer currently expects annotation-style semantic JSONs rather than running object detection online inside the viewer.

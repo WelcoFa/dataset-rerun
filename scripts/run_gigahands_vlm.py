@@ -76,6 +76,15 @@ CANONICAL_LABELS = [
 ]
 
 
+def infer_main_task(scene_name: str) -> str:
+    scene = scene_name.lower()
+    if "tea" in scene:
+        return "Preparing tea with a teapot"
+    if "boxing" in scene:
+        return "Interacting with a boxing bag"
+    return "Hand-object manipulation"
+
+
 # ============================================================
 # Data structures
 # ============================================================
@@ -206,16 +215,25 @@ Clip frame range: {start_frame} to {end_frame}
 
 Task:
 1. Treat the images as one short action clip.
-2. Choose exactly ONE label from this closed vocabulary:
+2. Write the semantic fields needed by a ROPedia-style viewer.
+3. Choose exactly ONE label from this closed vocabulary:
    [{labels_text}]
-3. Write one short action description in plain English.
 4. Focus on the dominant hand-object action in this clip.
-5. If uncertain, choose the closest label. Use "other" only when necessary.
+5. Keep sub_task short, like "grasping the teapot" or "lifting the mug".
+6. Keep interaction very short, ideally one or two words like "grasp" or "lift".
+7. objects must be a JSON list of visible manipulated objects.
+8. current_action must be one short sentence in plain English.
+9. If uncertain, choose the closest label. Use "other" only when necessary.
 
 Return STRICT JSON only:
 {{
+  "main_task": "one short sentence for the overall task",
+  "sub_task": "one short phrase for this clip",
+  "interaction": "very short interaction phrase",
+  "objects": ["object one", "object two"],
   "label": "one_label_from_the_list",
-  "text": "one short sentence"
+  "current_action": "one short sentence",
+  "text": "same as current_action"
 }}
 """.strip()
 
@@ -275,13 +293,55 @@ def normalize_label(label: str) -> str:
     return "other"
 
 
+def normalize_objects(value: Any) -> List[str]:
+    if isinstance(value, list):
+        raw = value
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = json.loads(text)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, list):
+                raw = parsed
+            else:
+                raw = [text]
+        else:
+            raw = re.split(r"[,;/\n]+", text)
+    else:
+        raw = [value]
+
+    cleaned = []
+    for item in raw:
+        text = str(item).strip().lower()
+        if not text or text in {"none", "n/a", "unknown"}:
+            continue
+        cleaned.append(text)
+
+    deduped = []
+    seen = set()
+    for item in cleaned:
+        if item not in seen:
+            deduped.append(item)
+            seen.add(item)
+    return deduped
+
+
 def parse_model_json(raw_text: str) -> Dict[str, Any]:
     raw_text = raw_text.strip()
     json_block = extract_json_block(raw_text)
 
     if json_block is None:
         return {
+            "main_task": infer_main_task(SCENE_NAME),
+            "sub_task": "other",
+            "interaction": "other",
+            "objects": [],
             "label": "other",
+            "current_action": raw_text[:200] if raw_text else "unparsed response",
             "text": raw_text[:200] if raw_text else "unparsed response",
             "parse_ok": False,
         }
@@ -290,19 +350,34 @@ def parse_model_json(raw_text: str) -> Dict[str, Any]:
         data = json.loads(json_block)
     except Exception:
         return {
+            "main_task": infer_main_task(SCENE_NAME),
+            "sub_task": "other",
+            "interaction": "other",
+            "objects": [],
             "label": "other",
+            "current_action": raw_text[:200] if raw_text else "json parse failed",
             "text": raw_text[:200] if raw_text else "json parse failed",
             "parse_ok": False,
         }
 
     label = normalize_label(str(data.get("label", "other")))
-    text = str(data.get("text", "")).strip()
-    if not text:
-        text = label
+    current_action = str(data.get("current_action", data.get("text", ""))).strip()
+    if not current_action:
+        current_action = label
+
+    sub_task = str(data.get("sub_task", label)).strip() or label
+    interaction = str(data.get("interaction", label)).strip() or label
+    main_task = str(data.get("main_task", infer_main_task(SCENE_NAME))).strip() or infer_main_task(SCENE_NAME)
+    objects = normalize_objects(data.get("objects", []))
 
     return {
+        "main_task": main_task,
+        "sub_task": sub_task,
+        "interaction": interaction,
+        "objects": objects,
         "label": label,
-        "text": text,
+        "current_action": current_action,
+        "text": current_action,
         "parse_ok": True,
     }
 
@@ -449,7 +524,12 @@ def merge_clip_predictions(raw_clip_preds: List[Dict[str, Any]]) -> List[Dict[st
     current = {
         "start": raw_clip_preds[0]["start"],
         "end": raw_clip_preds[0]["end"],
+        "main_task": raw_clip_preds[0]["main_task"],
+        "sub_task": raw_clip_preds[0]["sub_task"],
+        "interaction": raw_clip_preds[0]["interaction"],
+        "objects": list(raw_clip_preds[0]["objects"]),
         "label": raw_clip_preds[0]["label"],
+        "current_action": raw_clip_preds[0]["current_action"],
         "text": raw_clip_preds[0]["text"],
     }
 
@@ -458,14 +538,26 @@ def merge_clip_predictions(raw_clip_preds: List[Dict[str, Any]]) -> List[Dict[st
 
         if same_label:
             current["end"] = item["end"]
+            if len(item["sub_task"]) > len(current["sub_task"]):
+                current["sub_task"] = item["sub_task"]
+            if len(item["interaction"]) > len(current["interaction"]):
+                current["interaction"] = item["interaction"]
+            if len(item["current_action"]) > len(current["current_action"]):
+                current["current_action"] = item["current_action"]
             if len(item["text"]) > len(current["text"]):
                 current["text"] = item["text"]
+            current["objects"] = normalize_objects(current["objects"] + item["objects"])
         else:
             merged.append(current)
             current = {
                 "start": item["start"],
                 "end": item["end"],
+                "main_task": item["main_task"],
+                "sub_task": item["sub_task"],
+                "interaction": item["interaction"],
+                "objects": list(item["objects"]),
                 "label": item["label"],
+                "current_action": item["current_action"],
                 "text": item["text"],
             }
 
@@ -534,7 +626,12 @@ def main():
                 "start": clip.start_frame,
                 "end": clip.end_frame,
                 "sampled_frames": clip.sampled_frame_indices,
+                "main_task": parsed["main_task"],
+                "sub_task": parsed["sub_task"],
+                "interaction": parsed["interaction"],
+                "objects": parsed["objects"],
                 "label": parsed["label"],
+                "current_action": parsed["current_action"],
                 "text": parsed["text"],
                 "parse_ok": parsed.get("parse_ok", False),
                 "raw_response": raw_text,
@@ -546,7 +643,10 @@ def main():
                 f"frames {clip.start_frame}-{clip.end_frame} | "
                 f"label={item['label']} | parse_ok={item['parse_ok']}"
             )
-            print(f"    text={item['text']}")
+            print(f"    sub_task={item['sub_task']}")
+            print(f"    interaction={item['interaction']}")
+            print(f"    objects={item['objects']}")
+            print(f"    current_action={item['current_action']}")
 
         print()
 
@@ -572,7 +672,7 @@ def main():
     for i, step in enumerate(merged_steps, 1):
         print(
             f"  Step {i}: [{step['start']}, {step['end']}] "
-            f"{step['label']} | {step['text']}"
+            f"{step['label']} | {step['current_action']}"
         )
 
 

@@ -105,6 +105,7 @@ POSE_PATH = (
 )
 
 GT_STEPS_PATH = ANNOTATIONS_DIR / f"gt_steps_{SEQ_NAME}.json"
+PRED_RAW_CLIPS_PATH = ANNOTATIONS_DIR / f"pred_raw_clips_{SEQ_NAME}.json"
 PRED_STEPS_PATH = ANNOTATIONS_DIR / f"pred_steps_{SEQ_NAME}.json"
 
 
@@ -229,6 +230,12 @@ def load_steps(path: Path):
             step["objects"] = [str(step["objects"])]
 
     return data
+
+
+def load_optional_steps(path: Path):
+    if not path.exists():
+        return []
+    return load_steps(path)
 
 
 # =========================
@@ -524,18 +531,27 @@ def build_frame_info(frame_idx: int, step, seq_name: str, scene_registry, poses)
     fallback_label = str(step.get("_embedded_label", "")).strip()
     fallback_text = str(step.get("_embedded_text", "")).strip()
 
+    main_task = str(step.get("main_task", infer_main_task(seq_name))).strip()
+    if not main_task:
+        main_task = infer_main_task(seq_name)
+
     sub_task = str(step.get("sub_task", step.get("label", "unknown"))).strip()
-    interaction = str(step.get("label", step.get("interaction", "unknown"))).strip()
-    action_text = str(step.get("text", "")).strip()
+    interaction = str(step.get("interaction", step.get("label", "unknown"))).strip()
+    action_text = str(step.get("current_action", step.get("text", ""))).strip()
 
     if sub_task.lower() == "other" and fallback_label:
         sub_task = fallback_label
     if interaction.lower() == "other" and fallback_label:
         interaction = fallback_label
-    if action_text.startswith("{") and fallback_text:
+    if (
+        action_text.startswith("{")
+        or action_text.startswith("```")
+        or action_text.lower() == "other"
+    ) and fallback_text:
         action_text = fallback_text
 
     return {
+        "main_task": main_task,
         "sub_task": sub_task,
         "action_text": action_text,
         "interaction": interaction,
@@ -547,7 +563,7 @@ def log_caption_panels(base: str, seq_name: str, frame_info, progress: float):
     rr.log(
         f"{base}/captions/Main_Task",
         rr.TextDocument(
-            f"{infer_main_task(seq_name)}\n\nProgress: {progress * 100:.1f}%"
+            f"{frame_info['main_task']}\n\nProgress: {progress * 100:.1f}%"
         ),
     )
 
@@ -689,7 +705,6 @@ def main():
         RIGHT_3D_PATH,
         MESH_PATH,
         POSE_PATH,
-        GT_STEPS_PATH,
         PRED_STEPS_PATH,
     ]
     for p in required_paths:
@@ -701,7 +716,8 @@ def main():
     left_3d = load_3d(LEFT_3D_PATH)
     right_3d = load_3d(RIGHT_3D_PATH)
     mesh_vertices, mesh_faces = load_mesh(MESH_PATH)
-    gt_steps = load_steps(GT_STEPS_PATH)
+    gt_steps = load_optional_steps(GT_STEPS_PATH)
+    pred_raw_clips = load_optional_steps(PRED_RAW_CLIPS_PATH)
     pred_steps = load_steps(PRED_STEPS_PATH)
 
     with open(POSE_PATH, "r", encoding="utf-8") as f:
@@ -724,6 +740,8 @@ def main():
     base = SCENE_NAME
 
     log_step_summary(base, "gt_steps_summary", gt_steps)
+    if pred_raw_clips:
+        log_step_summary(base, "pred_raw_clips_summary", pred_raw_clips)
     log_step_summary(base, "pred_steps_summary", pred_steps)
     timeline_runs = log_timeline_series(base, pred_steps, "pred")
 
@@ -806,10 +824,12 @@ def main():
                 )
 
             gt_idx, gt_step = get_current_step(frame_idx, gt_steps)
+            pred_raw_idx, pred_raw_step = get_current_step(frame_idx, pred_raw_clips)
             pred_idx, pred_step = get_current_step(frame_idx, pred_steps)
 
             progress = compute_progress(frame_idx, total_frames)
-            frame_info = build_frame_info(frame_idx, pred_step, SEQ_NAME, scene_registry, poses)
+            semantic_step = pred_raw_step if pred_raw_step is not None else pred_step
+            frame_info = build_frame_info(frame_idx, semantic_step, SEQ_NAME, scene_registry, poses)
             log_caption_panels(base, SEQ_NAME, frame_info, progress)
             log_timeline_state(base, frame_idx, total_frames, timeline_runs)
 
