@@ -1,0 +1,35 @@
+[project]
+name = "multi-dataset-rerun-visualizers"
+version = "0.1.0"
+description = "Organized Rerun visualization scripts for public hand-object and robot datasets."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26",
+  "opencv-python>=4.10",
+  "rerun-sdk>=0.18",
+  "trimesh>=4.4",
+  "scipy>=1.13",
+  "h5py>=3.11",
+  "typer>=0.12",
+  "markdown>=3.6",
+]
+
+[project.optional-dependencies]
+gigahands-vlm = [
+  "torch>=2.3",
+  "transformers>=4.44",
+  "Pillow>=10.4",
+  "qwen-vl-utils>=0.0.8",
+]
+hot3d-mano = [
+  "torch>=2.3",
+  "smplx>=0.1.28",
+]
+dev = [
+  "ruff>=0.6",
+]
+
+[tool.uv]
+default-groups = []
+

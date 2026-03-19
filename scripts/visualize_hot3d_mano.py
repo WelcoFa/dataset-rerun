@@ -49,16 +49,14 @@ import smplx
 # =========================================================
 # Config
 # =========================================================
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parents[1]
-DATA_ROOT = REPO_ROOT / "data" / "HOT3D" / "hot3d_demo_full"
+ROOT = Path(__file__).resolve().parent
 SEQUENCE_NAME = "P0001_10a27bf7"
 
-SEQUENCE_DIR = DATA_ROOT / SEQUENCE_NAME
+SEQUENCE_DIR = ROOT / SEQUENCE_NAME
 HAND_DIR = SEQUENCE_DIR / "hand_data"
 GT_DIR = SEQUENCE_DIR / "ground_truth"
-OBJECT_MODELS_DIR = DATA_ROOT / "object_models"
-MANO_DIR = DATA_ROOT / "mano_models"
+OBJECT_MODELS_DIR = ROOT / "object_models"
+MANO_DIR = ROOT / "mano_models"
 
 FRAME_STRIDE = 10
 OBJECT_SCALE = 0.001
@@ -140,19 +138,38 @@ def transform_points(points: np.ndarray, q_wxyz, t_xyz):
 # Mesh loading
 # =========================================================
 def load_mesh_as_single_trimesh(mesh_file: Path):
-    mesh = trimesh.load(mesh_file, force="scene")
+    """
+    尽量保留 texture / uv 信息。
+    不直接无脑 concatenate，因为那样很容易把贴图关系搞丢。
+    """
+    loaded = trimesh.load(mesh_file, force="scene")
 
-    # glb 很多时候读出来是 Scene，要先合并
-    if isinstance(mesh, trimesh.Scene):
-        geoms = []
-        for g in mesh.geometry.values():
-            if isinstance(g, trimesh.Trimesh):
-                geoms.append(g)
-
+    if isinstance(loaded, trimesh.Trimesh):
+        mesh = loaded
+    elif isinstance(loaded, trimesh.Scene):
+        geoms = [g for g in loaded.geometry.values() if isinstance(g, trimesh.Trimesh)]
         if not geoms:
             return None
 
-        mesh = trimesh.util.concatenate(geoms)
+        if len(geoms) == 1:
+            mesh = geoms[0]
+        else:
+            # 优先选择带 UV 的 mesh，尽量保住 texture
+            uv_meshes = []
+            for g in geoms:
+                uv = getattr(g.visual, "uv", None)
+                if uv is not None:
+                    uv = np.asarray(uv)
+                    if uv.ndim == 2 and uv.shape[0] == len(g.vertices) and uv.shape[1] >= 2:
+                        uv_meshes.append(g)
+
+            if uv_meshes:
+                mesh = uv_meshes[0]
+            else:
+                # 没 uv 的话退化成第一个有效 mesh
+                mesh = geoms[0]
+    else:
+        return None
 
     if not isinstance(mesh, trimesh.Trimesh):
         return None
@@ -166,11 +183,125 @@ def load_mesh_as_single_trimesh(mesh_file: Path):
     return mesh
 
 
+def normalize_texture_image(img):
+    if img is None:
+        return None
+
+    try:
+        img = np.array(img)
+    except Exception:
+        try:
+            img = np.asarray(img)
+        except Exception:
+            return None
+
+    if img is None:
+        return None
+
+    if img.ndim == 2:
+        img = np.stack([img, img, img], axis=-1)
+
+    if img.ndim != 3:
+        return None
+
+    if img.shape[2] == 1:
+        img = np.repeat(img, 3, axis=2)
+    elif img.shape[2] > 4:
+        img = img[:, :, :4]
+
+    if img.dtype != np.uint8:
+        if np.issubdtype(img.dtype, np.floating):
+            if img.max() <= 1.0:
+                img = (img * 255.0).clip(0, 255).astype(np.uint8)
+            else:
+                img = img.clip(0, 255).astype(np.uint8)
+        else:
+            img = img.clip(0, 255).astype(np.uint8)
+
+    return img
+
+
+def extract_texture_and_uv(mesh: trimesh.Trimesh):
+    """
+    返回:
+        texcoords: (N, 2) float32 or None
+        texture_image: (H, W, C) uint8 or None
+    """
+    texcoords = None
+    texture_image = None
+
+    # ---- UV ----
+    uv = getattr(mesh.visual, "uv", None)
+    if uv is not None:
+        uv = np.asarray(uv, dtype=np.float32)
+        if uv.ndim == 2 and uv.shape[0] == len(mesh.vertices) and uv.shape[1] >= 2:
+            texcoords = uv[:, :2].copy()
+            # glTF / viewer 经常存在 V 方向差异，这里翻一下更稳
+            texcoords[:, 1] = 1.0 - texcoords[:, 1]
+
+    # ---- Material texture ----
+    material = getattr(mesh.visual, "material", None)
+    if material is not None:
+        candidates = []
+
+        for attr in [
+            "baseColorTexture",
+            "base_color_texture",
+            "diffuseTexture",
+            "image",
+        ]:
+            if hasattr(material, attr):
+                candidates.append(getattr(material, attr))
+
+        for cand in candidates:
+            if cand is None:
+                continue
+            texture_image = normalize_texture_image(cand)
+            if texture_image is not None:
+                break
+
+    return texcoords, texture_image
+
+
+def extract_vertex_colors(mesh: trimesh.Trimesh):
+    if not hasattr(mesh.visual, "vertex_colors") or mesh.visual.vertex_colors is None:
+        return None
+
+    vc = np.asarray(mesh.visual.vertex_colors)
+    if vc.ndim != 2 or vc.shape[0] != len(mesh.vertices) or vc.shape[1] < 3:
+        return None
+
+    if vc.shape[1] >= 4:
+        vc = vc[:, :4]
+    else:
+        vc = vc[:, :3]
+
+    if vc.dtype != np.uint8:
+        if np.issubdtype(vc.dtype, np.floating):
+            if vc.max() <= 1.0:
+                vc = (vc * 255.0).clip(0, 255).astype(np.uint8)
+            else:
+                vc = vc.clip(0, 255).astype(np.uint8)
+        else:
+            vc = vc.clip(0, 255).astype(np.uint8)
+
+    return vc
+
+
 def load_object_meshes(object_models_dir: Path, metadata: dict):
     object_uid_to_name = dict(zip(metadata["object_uids"], metadata["object_names"]))
     object_uid_to_bop = dict(zip(metadata["object_uids"], metadata["object_bop_uids"]))
 
     meshes = {}
+
+    palette = [
+        [1.0, 0.0, 0.0, 1.0],  # red
+        [0.0, 1.0, 0.0, 1.0],  # green
+        [0.0, 0.0, 1.0, 1.0],  # blue
+        [1.0, 1.0, 0.0, 1.0],  # yellow
+        [1.0, 0.0, 1.0, 1.0],  # magenta
+        [0.0, 1.0, 1.0, 1.0],  # cyan
+    ]
 
     for obj_uid, obj_name in object_uid_to_name.items():
         bop_id = int(object_uid_to_bop[obj_uid])
@@ -187,38 +318,34 @@ def load_object_meshes(object_models_dir: Path, metadata: dict):
 
         verts = np.asarray(mesh.vertices, dtype=np.float32)
         faces = np.asarray(mesh.faces, dtype=np.uint32)
-        palette = [
-            [1.0, 0.0, 0.0, 1.0],  # red
-            [0.0, 1.0, 0.0, 1.0],  # green
-            [0.0, 0.0, 1.0, 1.0],  # blue
-            [1.0, 1.0, 0.0, 1.0],  # yellow
-            [1.0, 0.0, 1.0, 1.0],  # magenta
-            [0.0, 1.0, 1.0, 1.0],  # cyan
-        ]
 
+        texcoords, texture_image = extract_texture_and_uv(mesh)
+        vertex_colors = extract_vertex_colors(mesh)
         albedo_factor = palette[len(meshes) % len(palette)]
-
-        colors = None
-        if hasattr(mesh.visual, "vertex_colors") and mesh.visual.vertex_colors is not None:
-            vc = np.asarray(mesh.visual.vertex_colors)
-            print(mesh_file.name, "vertex_colors shape:", vc.shape, "dtype:", vc.dtype)
-            if vc.ndim == 2 and vc.shape[0] == verts.shape[0] and vc.shape[1] >= 3:
-                colors = vc[:, :4] if vc.shape[1] >= 4 else vc[:, :3]
-
-                # 看看是不是几乎全白
-                print("  min:", colors.min(axis=0), "max:", colors.max(axis=0))
-        else:
-            print(mesh_file.name, "no vertex_colors")
 
         # mesh 居中，后续再应用物体位姿
         center = verts.mean(axis=0)
         verts = verts - center
+
+        print(f"[INFO] {mesh_file.name}")
+        print(f"  verts             : {verts.shape}")
+        print(f"  faces             : {faces.shape}")
+        print(f"  has_uv            : {texcoords is not None}")
+        print(f"  has_texture       : {texture_image is not None}")
+        print(f"  has_vertex_colors : {vertex_colors is not None}")
+        if texture_image is not None:
+            print(f"  texture_shape     : {texture_image.shape}, dtype={texture_image.dtype}")
+        if vertex_colors is not None:
+            print(f"  vertex_color_shape: {vertex_colors.shape}, dtype={vertex_colors.dtype}")
 
         meshes[obj_uid] = {
             "name": obj_name,
             "bop_id": bop_id,
             "vertices_local": verts,
             "faces": faces,
+            "texcoords": texcoords,
+            "texture_image": texture_image,
+            "vertex_colors": vertex_colors,
             "albedo_factor": albedo_factor,
         }
 
@@ -395,14 +522,26 @@ def log_object_mesh(path_prefix: str, mesh_info: dict, row: dict):
         t_xyz,
     )
 
-    rr.log(
-        path_prefix,
-        rr.Mesh3D(
-            vertex_positions=vertices_world,
-            triangle_indices=mesh_info["faces"],
-            albedo_factor=mesh_info["albedo_factor"],
-        ),
+    mesh_kwargs = dict(
+        vertex_positions=vertices_world,
+        triangle_indices=mesh_info["faces"],
     )
+
+    # 优先真实 texture
+    if mesh_info.get("texcoords") is not None and mesh_info.get("texture_image") is not None:
+        mesh_kwargs["vertex_texcoords"] = mesh_info["texcoords"]
+        mesh_kwargs["albedo_texture"] = mesh_info["texture_image"]
+
+    # 其次 vertex colors
+    elif mesh_info.get("vertex_colors") is not None:
+        mesh_kwargs["vertex_colors"] = mesh_info["vertex_colors"]
+
+    # 最后 fallback 纯色
+    else:
+        mesh_kwargs["albedo_factor"] = mesh_info["albedo_factor"]
+
+    rr.log(path_prefix, rr.Mesh3D(**mesh_kwargs))
+
 
 def log_hand_mesh(path_prefix: str, verts: np.ndarray, joints: np.ndarray, faces: np.ndarray):
     rr.log(
@@ -478,7 +617,6 @@ def main():
         ),
     )
 
-    # 轨迹
     object_traj = {}
     for row in dynamic_rows:
         uid = row["object_uid"]
@@ -548,7 +686,39 @@ def main():
             if uid not in object_meshes:
                 continue
             mesh_info = object_meshes[uid]
-            log_object_mesh(f"world/objects/{mesh_info['name']}", mesh_info, row)
+            try:
+                log_object_mesh(f"world/objects/{mesh_info['name']}", mesh_info, row)
+            except TypeError as e:
+                print(f"[WARN] Mesh logging failed for {mesh_info['name']}: {e}")
+                print("[WARN] Your rerun version may not support texture mesh fields such as vertex_texcoords/albedo_texture.")
+                # fallback 到纯色
+                rr.log(
+                    f"world/objects/{mesh_info['name']}",
+                    rr.Mesh3D(
+                        vertex_positions=transform_points(
+                            mesh_info["vertices_local"] * OBJECT_SCALE,
+                            np.array(
+                                [
+                                    float(row["q_wo_w"]),
+                                    float(row["q_wo_x"]),
+                                    float(row["q_wo_y"]),
+                                    float(row["q_wo_z"]),
+                                ],
+                                dtype=np.float32,
+                            ),
+                            np.array(
+                                [
+                                    float(row["t_wo_x[m]"]),
+                                    float(row["t_wo_y[m]"]),
+                                    float(row["t_wo_z[m]"]),
+                                ],
+                                dtype=np.float32,
+                            ),
+                        ),
+                        triangle_indices=mesh_info["faces"],
+                        albedo_factor=mesh_info["albedo_factor"],
+                    ),
+                )
 
         # hands
         if hand_row is not None:
