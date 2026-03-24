@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import cv2
@@ -7,7 +8,6 @@ import rerun as rr
 import trimesh
 from scipy.interpolate import interp1d
 from scipy.spatial.transform import Rotation, Slerp
-
 
 
 # =========================
@@ -33,11 +33,14 @@ ANNOTATIONS_DIR = DATA_ROOT / "annotations"
 
 SEQ_NAME = "p36-tea-0010"
 CAM_NAME = "brics-odroid-010_cam0"
-FRAME_ID = "1727030430697198"   # 你的那一帧
+FRAME_ID = "1727030430697198"
+SCENE_NAME = "scene_gigahands"
+
 
 # =========================
-# Video
+# Paths
 # =========================
+
 VIDEO_PATH = (
     GIGAHANDS_ROOT
     / "hand_pose"
@@ -47,9 +50,6 @@ VIDEO_PATH = (
     / f"{CAM_NAME}_{FRAME_ID}.mp4"
 )
 
-# =========================
-# 2D keypoints
-# =========================
 LEFT_2D_PATH = (
     GIGAHANDS_ROOT
     / "hand_pose"
@@ -70,9 +70,6 @@ RIGHT_2D_PATH = (
     / f"{CAM_NAME}_{FRAME_ID}.jsonl"
 )
 
-# =========================
-# 3D keypoints
-# =========================
 LEFT_3D_PATH = (
     GIGAHANDS_ROOT
     / "hand_pose"
@@ -91,9 +88,6 @@ RIGHT_3D_PATH = (
     / "right.jsonl"
 )
 
-# =========================
-# Mesh（你现在用这个）
-# =========================
 MESH_PATH = (
     GIGAHANDS_ROOT
     / "object_pose"
@@ -102,9 +96,6 @@ MESH_PATH = (
     / "teapot_with_lid.obj"
 )
 
-# =========================
-# Pose
-# =========================
 POSE_PATH = (
     GIGAHANDS_ROOT
     / "object_pose"
@@ -113,20 +104,10 @@ POSE_PATH = (
     / "optimized_pose.json"
 )
 
-# =========================
-# Steps
-# =========================
-GT_STEPS_PATH = (
-    ANNOTATIONS_DIR
-    / f"gt_steps_{SEQ_NAME}.json"
-)
+GT_STEPS_PATH = ANNOTATIONS_DIR / f"gt_steps_{SEQ_NAME}.json"
+PRED_RAW_CLIPS_PATH = ANNOTATIONS_DIR / f"pred_raw_clips_{SEQ_NAME}.json"
+PRED_STEPS_PATH = ANNOTATIONS_DIR / f"pred_steps_{SEQ_NAME}.json"
 
-PRED_STEPS_PATH = (
-    ANNOTATIONS_DIR
-    / f"pred_steps_{SEQ_NAME}.json"
-)
-
-SCENE_NAME = "scene_gigahands"
 
 # =========================
 # IO helpers
@@ -173,6 +154,50 @@ def load_mesh(path: Path):
     return vertices, faces
 
 
+def extract_step_text(value):
+    if isinstance(value, dict):
+        if "text" in value:
+            return str(value["text"])
+        if "label" in value:
+            return str(value["label"])
+        return json.dumps(value, ensure_ascii=False)
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return stripped
+            return extract_step_text(parsed)
+        return stripped
+
+    return str(value)
+
+
+def extract_embedded_step_fields(value):
+    if isinstance(value, dict):
+        return {
+            "label": extract_step_text(value.get("label", "")),
+            "text": extract_step_text(value.get("text", "")),
+        }
+
+    if not isinstance(value, str):
+        return {"label": "", "text": extract_step_text(value)}
+
+    stripped = value.strip()
+    label_match = re.search(r'"label"\s*:\s*"([^"]+)', stripped)
+    text_match = re.search(r'"text"\s*:\s*"([^"]+)', stripped, flags=re.DOTALL)
+
+    embedded_label = label_match.group(1).strip() if label_match else ""
+    embedded_text = text_match.group(1).strip() if text_match else ""
+
+    return {
+        "label": embedded_label,
+        "text": embedded_text,
+    }
+
+
 def load_steps(path: Path):
     if not path.exists():
         raise FileNotFoundError(f"Step file not found: {path}")
@@ -189,16 +214,28 @@ def load_steps(path: Path):
             if key not in step:
                 raise ValueError(f"{path} step #{i} missing key: {key}")
 
-        # label is optional
-        if "label" not in step:
-            step["label"] = step["text"]
-
         step["start"] = int(step["start"])
         step["end"] = int(step["end"])
-        step["label"] = str(step["label"])
-        step["text"] = str(step["text"])
+        embedded = extract_embedded_step_fields(step["text"])
+        step["label"] = extract_step_text(step.get("label", step["text"]))
+        step["text"] = extract_step_text(step["text"])
+        step["_embedded_label"] = embedded["label"]
+        step["_embedded_text"] = embedded["text"]
+
+        if "sub_task" in step:
+            step["sub_task"] = extract_step_text(step["sub_task"])
+        if "interaction" in step:
+            step["interaction"] = extract_step_text(step["interaction"])
+        if "objects" in step and not isinstance(step["objects"], list):
+            step["objects"] = [str(step["objects"])]
 
     return data
+
+
+def load_optional_steps(path: Path):
+    if not path.exists():
+        return []
+    return load_steps(path)
 
 
 # =========================
@@ -206,10 +243,6 @@ def load_steps(path: Path):
 # =========================
 
 def quat_to_rotmat(q):
-    """
-    Input q is assumed to be wxyz.
-    Convert to scipy xyzw, then to rotation matrix.
-    """
     q = np.asarray(q, dtype=np.float32).reshape(4,)
     q_xyzw = np.array([q[1], q[2], q[3], q[0]], dtype=np.float32)
     return Rotation.from_quat(q_xyzw).as_matrix().T.astype(np.float32)
@@ -232,12 +265,6 @@ def moving_average_filter(signal, window_size=5):
 
 
 def interpolate_poses(poses):
-    """
-    poses: dict keyed by '000000', '000001', ...
-    each item contains:
-      - mesh_translation
-      - mesh_rotation  (assumed wxyz)
-    """
     tracked_frames = sorted(int(k) for k in poses.keys())
     if not tracked_frames:
         return {}
@@ -370,10 +397,6 @@ def format_compare_text(gt_idx, gt_step, pred_idx, pred_step):
 
 
 def log_step_summary(base: str, name: str, steps):
-    """
-    Log each step exactly once, so if there are 4 steps in JSON,
-    Rerun will show exactly 4 summary entries under this group.
-    """
     for i, step in enumerate(steps):
         text = (
             f"Step {i + 1}\n"
@@ -381,10 +404,290 @@ def log_step_summary(base: str, name: str, steps):
             f"Label: {step['label']}\n"
             f"Text: {step['text']}"
         )
-        rr.log(
-            f"{base}/eval/{name}/step_{i + 1:02d}",
-            rr.TextLog(text),
-        )
+        rr.log(f"{base}/eval/{name}/step_{i + 1:02d}", rr.TextLog(text))
+
+
+# =========================
+# Ropedia-style semantic helpers
+# =========================
+
+def infer_main_task(seq_name: str) -> str:
+    seq = seq_name.lower()
+    if "tea" in seq:
+        return "Preparing tea with a teapot"
+    if "boxing" in seq:
+        return "Interacting with a boxing bag"
+    return "Hand-object manipulation"
+
+
+def discover_scene_objects(seq_name: str) -> list[str]:
+    pose_dir = (
+        GIGAHANDS_ROOT
+        / "object_pose"
+        / seq_name
+        / "pose"
+    )
+
+    if not pose_dir.exists():
+        return []
+
+    object_names = []
+    for p in pose_dir.iterdir():
+        if p.suffix.lower() in {".obj", ".ply", ".glb", ".stl"}:
+            object_names.append(p.stem)
+
+    return sorted(set(object_names))
+
+
+def normalize_object_name(name: str) -> list[str]:
+    name = name.lower().replace("-", "_").strip()
+
+    banned_exact = {
+        "transform",
+        "mesh",
+        "transform_mesh",
+        "object",
+        "world",
+        "camera",
+        "scene",
+    }
+    if name in banned_exact:
+        return []
+
+    tokens = [t for t in name.split("_") if t]
+    banned_tokens = {"transform", "mesh", "world", "camera", "scene"}
+    if tokens and all(t in banned_tokens for t in tokens):
+        return []
+
+    special_map = {
+        "teapot_with_lid": ["teapot", "lid"],
+        "boxing_bag_stand": ["boxing bag", "stand"],
+    }
+    if name in special_map:
+        return special_map[name]
+
+    drop_tokens = {"with", "and", "transform", "mesh", "object", "objects"}
+    tokens = [t for t in tokens if t not in drop_tokens]
+
+    if not tokens:
+        return []
+
+    return [" ".join(tokens)]
+
+
+def build_scene_object_registry(seq_name: str):
+    raw_names = discover_scene_objects(seq_name)
+
+    registry = []
+    for raw in raw_names:
+        labels = normalize_object_name(raw)
+        if not labels:
+            continue
+        registry.append({
+            "raw_name": raw,
+            "labels": labels,
+        })
+
+    return registry
+
+
+def get_active_objects_for_frame(frame_idx: int, registry, poses) -> list[str]:
+    pose_key = f"{frame_idx:06d}"
+    if pose_key not in poses:
+        return []
+
+    active = []
+    for item in registry:
+        active.extend(item["labels"])
+
+    return sorted(set(active))
+
+
+def infer_objects(frame_idx: int, seq_name: str, step, scene_registry, poses) -> list[str]:
+    if step is not None and "objects" in step and isinstance(step["objects"], list):
+        filtered = []
+        for obj in step["objects"]:
+            filtered.extend(normalize_object_name(str(obj)))
+        filtered = sorted(set(filtered))
+        if filtered:
+            return filtered
+
+    active = get_active_objects_for_frame(frame_idx, scene_registry, poses)
+    if active:
+        return active
+
+    return []
+
+
+def build_frame_info(frame_idx: int, step, seq_name: str, scene_registry, poses):
+    if step is None:
+        return {
+            "sub_task": "No active sub task",
+            "interaction": "None",
+            "action_text": "No active action",
+            "objects": get_active_objects_for_frame(frame_idx, scene_registry, poses),
+        }
+
+    fallback_label = str(step.get("_embedded_label", "")).strip()
+    fallback_text = str(step.get("_embedded_text", "")).strip()
+
+    main_task = str(step.get("main_task", infer_main_task(seq_name))).strip()
+    if not main_task:
+        main_task = infer_main_task(seq_name)
+
+    sub_task = str(step.get("sub_task", step.get("label", "unknown"))).strip()
+    interaction = str(step.get("interaction", step.get("label", "unknown"))).strip()
+    action_text = str(step.get("current_action", step.get("text", ""))).strip()
+
+    if sub_task.lower() == "other" and fallback_label:
+        sub_task = fallback_label
+    if interaction.lower() == "other" and fallback_label:
+        interaction = fallback_label
+    if (
+        action_text.startswith("{")
+        or action_text.startswith("```")
+        or action_text.lower() == "other"
+    ) and fallback_text:
+        action_text = fallback_text
+
+    return {
+        "main_task": main_task,
+        "sub_task": sub_task,
+        "action_text": action_text,
+        "interaction": interaction,
+        "objects": infer_objects(frame_idx, seq_name, step, scene_registry, poses),
+    }
+
+
+def log_caption_panels(base: str, seq_name: str, frame_info, progress: float):
+    rr.log(
+        f"{base}/captions/Main_Task",
+        rr.TextDocument(
+            f"{frame_info['main_task']}\n\nProgress: {progress * 100:.1f}%"
+        ),
+    )
+
+    rr.log(
+        f"{base}/captions/Sub_Task",
+        rr.TextDocument(frame_info["sub_task"]),
+    )
+
+    rr.log(
+        f"{base}/captions/Current_Action",
+        rr.TextDocument(frame_info["action_text"]),
+    )
+
+    rr.log(
+        f"{base}/captions/details/interaction",
+        rr.TextDocument(frame_info["interaction"]),
+    )
+
+    objects_text = "\n".join(f"- {obj}" for obj in frame_info["objects"])
+    if not objects_text:
+        objects_text = "None"
+
+    rr.log(
+        f"{base}/captions/details/objects",
+        rr.TextDocument(objects_text),
+    )
+
+
+# =========================
+# Timeline helpers
+# =========================
+
+def log_timeline_series(base: str, steps, name: str):
+    del name
+
+    def get_task_color(idx: int):
+        colors = [
+            [255, 50, 50], [50, 255, 50], [50, 50, 255], [255, 255, 50], [50, 255, 255],
+            [255, 50, 255], [255, 128, 0], [128, 0, 128], [0, 128, 0], [0, 0, 128],
+            [128, 128, 0], [128, 0, 0], [0, 128, 128],
+        ]
+        return colors[idx % len(colors)]
+
+    runs = []
+    for step in steps:
+        task_name = step["label"]
+        start_f = int(step["start"])
+        end_f = int(step["end"])
+        if runs and runs[-1]["task"] == task_name:
+            runs[-1]["end"] = max(runs[-1]["end"], end_f)
+        else:
+            runs.append({"task": task_name, "start": start_f, "end": end_f})
+
+    labeled_tasks = set()
+    for run_idx, run in enumerate(runs):
+        entity_path = f"{base}/timeline/run_{run_idx:03d}/line_0"
+        label = ""
+        if run["task"] not in labeled_tasks:
+            label = run["task"]
+            labeled_tasks.add(run["task"])
+        try:
+            rr.log(
+                entity_path,
+                rr.SeriesLines(colors=get_task_color(run_idx), widths=4, names=label),
+                static=True,
+            )
+        except TypeError:
+            rr.log(
+                entity_path,
+                rr.SeriesLines(colors=get_task_color(run_idx), widths=4, names=label),
+            )
+
+    return runs
+
+
+def compute_progress(frame_idx: int, total_frames: int) -> float:
+    if total_frames <= 1:
+        return 1.0
+    return frame_idx / float(total_frames - 1)
+
+
+def log_timeline_state(base: str, frame_idx: int, total_frames: int, timeline_runs):
+    progress = compute_progress(frame_idx, total_frames)
+    rr.log(f"{base}/timeline/progress", rr.Scalars(progress))
+
+    for run_idx, run in enumerate(timeline_runs):
+        entity_path = f"{base}/timeline/run_{run_idx:03d}/line_0"
+        if run["start"] <= frame_idx <= run["end"]:
+            rr.log(entity_path, rr.Scalars(0.0))
+
+
+# =========================
+# Blueprint
+# =========================
+
+def create_blueprint():
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Vertical(
+                rrb.Spatial2DView(origin="scene_gigahands/camera", name="RGB + 2D Hands"),
+                rrb.Spatial3DView(origin="scene_gigahands/world", name="3D Scene"),
+            ),
+            rrb.Vertical(
+                rrb.Horizontal(
+                    rrb.Vertical(
+                        rrb.TextDocumentView(origin="scene_gigahands/captions/Main_Task", name="Main Task"),
+                        rrb.TextDocumentView(origin="scene_gigahands/captions/details/objects", name="Objects"),
+                    ),
+                    rrb.Vertical(
+                        rrb.TextDocumentView(origin="scene_gigahands/captions/Sub_Task", name="Sub Task"),
+                        rrb.TextDocumentView(origin="scene_gigahands/captions/details/interaction", name="Interaction"),
+                        rrb.TextDocumentView(origin="scene_gigahands/captions/Current_Action", name="Current Action"),
+                    ),
+                ),
+                rrb.TimeSeriesView(
+                    origin="scene_gigahands/timeline",
+                    name="Task Timeline",
+                ),
+            ),
+        ),
+        collapse_panels=True,
+    )
 
 
 # =========================
@@ -392,73 +695,55 @@ def log_step_summary(base: str, name: str, steps):
 # =========================
 
 def main():
-    print("Loading GigaHands evaluation scene...")
-    print("VIDEO_PATH      =", VIDEO_PATH)
-    print("LEFT_2D_PATH    =", LEFT_2D_PATH)
-    print("RIGHT_2D_PATH   =", RIGHT_2D_PATH)
-    print("LEFT_3D_PATH    =", LEFT_3D_PATH)
-    print("RIGHT_3D_PATH   =", RIGHT_3D_PATH)
-    print("MESH_PATH       =", MESH_PATH)
-    print("POSE_PATH       =", POSE_PATH)
-    print("GT_STEPS_PATH   =", GT_STEPS_PATH)
-    print("PRED_STEPS_PATH =", PRED_STEPS_PATH)
+    print("Loading GigaHands evaluation scene with Ropedia-style semantic panels...")
 
-    if not VIDEO_PATH.exists():
-        raise FileNotFoundError(f"Video not found: {VIDEO_PATH}")
-    if not LEFT_2D_PATH.exists():
-        raise FileNotFoundError(f"Left 2D path not found: {LEFT_2D_PATH}")
-    if not RIGHT_2D_PATH.exists():
-        raise FileNotFoundError(f"Right 2D path not found: {RIGHT_2D_PATH}")
-    if not LEFT_3D_PATH.exists():
-        raise FileNotFoundError(f"Left 3D path not found: {LEFT_3D_PATH}")
-    if not RIGHT_3D_PATH.exists():
-        raise FileNotFoundError(f"Right 3D path not found: {RIGHT_3D_PATH}")
-    if not MESH_PATH.exists():
-        raise FileNotFoundError(f"Mesh path not found: {MESH_PATH}")
-    if not POSE_PATH.exists():
-        raise FileNotFoundError(f"Pose path not found: {POSE_PATH}")
-    if not GT_STEPS_PATH.exists():
-        raise FileNotFoundError(f"GT steps path not found: {GT_STEPS_PATH}")
-    if not PRED_STEPS_PATH.exists():
-        raise FileNotFoundError(f"Pred steps path not found: {PRED_STEPS_PATH}")
+    required_paths = [
+        VIDEO_PATH,
+        LEFT_2D_PATH,
+        RIGHT_2D_PATH,
+        LEFT_3D_PATH,
+        RIGHT_3D_PATH,
+        MESH_PATH,
+        POSE_PATH,
+        PRED_STEPS_PATH,
+    ]
+    for p in required_paths:
+        if not p.exists():
+            raise FileNotFoundError(f"Path not found: {p}")
 
     left_2d = load_2d(LEFT_2D_PATH)
     right_2d = load_2d(RIGHT_2D_PATH)
     left_3d = load_3d(LEFT_3D_PATH)
     right_3d = load_3d(RIGHT_3D_PATH)
     mesh_vertices, mesh_faces = load_mesh(MESH_PATH)
-    gt_steps = load_steps(GT_STEPS_PATH)
+    gt_steps = load_optional_steps(GT_STEPS_PATH)
+    pred_raw_clips = load_optional_steps(PRED_RAW_CLIPS_PATH)
     pred_steps = load_steps(PRED_STEPS_PATH)
 
     with open(POSE_PATH, "r", encoding="utf-8") as f:
         raw_poses = json.load(f)
     poses = interpolate_poses(raw_poses)
-
-    print(f"Loaded left_2d frames:   {len(left_2d)}")
-    print(f"Loaded right_2d frames:  {len(right_2d)}")
-    print(f"Loaded left_3d frames:   {len(left_3d)}")
-    print(f"Loaded right_3d frames:  {len(right_3d)}")
-    print(f"Loaded GT steps:         {len(gt_steps)}")
-    print(f"Loaded Pred steps:       {len(pred_steps)}")
-    print(f"Mesh vertices:           {len(mesh_vertices)}")
-    print(f"Mesh faces:              {len(mesh_faces)}")
+    scene_registry = build_scene_object_registry(SEQ_NAME)
+    print("Scene objects:", scene_registry)
 
     cap = cv2.VideoCapture(str(VIDEO_PATH))
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {VIDEO_PATH}")
 
-    rr.init("gigahands_eval", spawn=True)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total_frames <= 0:
+        total_frames = max(len(left_2d), len(right_2d), len(left_3d), len(right_3d), 1)
+
+    rr.init("gigahands_eval_test", spawn=True)
+    rr.send_blueprint(create_blueprint())
 
     base = SCENE_NAME
 
-    # Log step summaries exactly once
     log_step_summary(base, "gt_steps_summary", gt_steps)
+    if pred_raw_clips:
+        log_step_summary(base, "pred_raw_clips_summary", pred_raw_clips)
     log_step_summary(base, "pred_steps_summary", pred_steps)
-
-    # Track state so current-step text only updates when the step changes
-    last_gt_idx = object()
-    last_pred_idx = object()
-    last_compare_key = object()
+    timeline_runs = log_timeline_series(base, pred_steps, "pred")
 
     frame_idx = 0
     try:
@@ -469,88 +754,52 @@ def main():
 
             rr.set_time("frame", sequence=frame_idx)
 
-            # -------------------------
-            # RGB
-            # -------------------------
             rr.log(f"{base}/camera/rgb", rr.Image(frame))
 
-            # -------------------------
-            # 2D hands
-            # -------------------------
             if frame_idx < len(left_2d):
                 pts = left_2d[frame_idx]
-                rr.log(
-                    f"{base}/camera/left_hand_2d/keypoints",
-                    rr.Points2D(pts),
-                )
+                rr.log(f"{base}/camera/left_hand_2d/keypoints", rr.Points2D(pts))
                 lines = [
                     np.stack([pts[a], pts[b]], axis=0)
                     for a, b in HAND_BONES
                     if a < len(pts) and b < len(pts)
                 ]
                 if lines:
-                    rr.log(
-                        f"{base}/camera/left_hand_2d/bones",
-                        rr.LineStrips2D(lines),
-                    )
+                    rr.log(f"{base}/camera/left_hand_2d/bones", rr.LineStrips2D(lines))
 
             if frame_idx < len(right_2d):
                 pts = right_2d[frame_idx]
-                rr.log(
-                    f"{base}/camera/right_hand_2d/keypoints",
-                    rr.Points2D(pts),
-                )
+                rr.log(f"{base}/camera/right_hand_2d/keypoints", rr.Points2D(pts))
                 lines = [
                     np.stack([pts[a], pts[b]], axis=0)
                     for a, b in HAND_BONES
                     if a < len(pts) and b < len(pts)
                 ]
                 if lines:
-                    rr.log(
-                        f"{base}/camera/right_hand_2d/bones",
-                        rr.LineStrips2D(lines),
-                    )
+                    rr.log(f"{base}/camera/right_hand_2d/bones", rr.LineStrips2D(lines))
 
-            # -------------------------
-            # 3D hands
-            # -------------------------
             if frame_idx < len(left_3d):
                 pts = left_3d[frame_idx]
-                rr.log(
-                    f"{base}/world/left_hand_3d/keypoints",
-                    rr.Points3D(pts),
-                )
+                rr.log(f"{base}/world/left_hand_3d/keypoints", rr.Points3D(pts))
                 lines = [
                     np.stack([pts[a], pts[b]], axis=0)
                     for a, b in HAND_BONES
                     if a < len(pts) and b < len(pts)
                 ]
                 if lines:
-                    rr.log(
-                        f"{base}/world/left_hand_3d/bones",
-                        rr.LineStrips3D(lines),
-                    )
+                    rr.log(f"{base}/world/left_hand_3d/bones", rr.LineStrips3D(lines))
 
             if frame_idx < len(right_3d):
                 pts = right_3d[frame_idx]
-                rr.log(
-                    f"{base}/world/right_hand_3d/keypoints",
-                    rr.Points3D(pts),
-                )
+                rr.log(f"{base}/world/right_hand_3d/keypoints", rr.Points3D(pts))
                 lines = [
                     np.stack([pts[a], pts[b]], axis=0)
                     for a, b in HAND_BONES
                     if a < len(pts) and b < len(pts)
                 ]
                 if lines:
-                    rr.log(
-                        f"{base}/world/right_hand_3d/bones",
-                        rr.LineStrips3D(lines),
-                    )
+                    rr.log(f"{base}/world/right_hand_3d/bones", rr.LineStrips3D(lines))
 
-            # -------------------------
-            # Object pose + mesh
-            # -------------------------
             pose_key = f"{frame_idx:06d}"
             if pose_key in poses:
                 pose = poses[pose_key]
@@ -560,12 +809,8 @@ def main():
 
                 rr.log(
                     f"{base}/world/object",
-                    rr.Transform3D(
-                        translation=t,
-                        mat3x3=R,
-                    ),
+                    rr.Transform3D(translation=t, mat3x3=R),
                 )
-
                 rr.log(
                     f"{base}/world/object/mesh",
                     rr.Mesh3D(
@@ -574,48 +819,15 @@ def main():
                     ),
                 )
 
-            # -------------------------
-            # Evaluation: GT vs Pred
-            # -------------------------
             gt_idx, gt_step = get_current_step(frame_idx, gt_steps)
+            pred_raw_idx, pred_raw_step = get_current_step(frame_idx, pred_raw_clips)
             pred_idx, pred_step = get_current_step(frame_idx, pred_steps)
 
-            # only update when current GT step changes
-            if gt_idx != last_gt_idx:
-                rr.log(
-                    f"{base}/eval/gt_current_step",
-                    rr.TextLog(format_step_text("GT", gt_idx, gt_step)),
-                )
-                rr.log(
-                    f"{base}/eval/gt_step_id",
-                    rr.TextLog(
-                        f"gt_step_{gt_idx + 1:02d}" if gt_step is not None else "gt_none"
-                    ),
-                )
-                last_gt_idx = gt_idx
-
-            # only update when current Pred step changes
-            if pred_idx != last_pred_idx:
-                rr.log(
-                    f"{base}/eval/pred_current_step",
-                    rr.TextLog(format_step_text("Pred", pred_idx, pred_step)),
-                )
-                rr.log(
-                    f"{base}/eval/pred_step_id",
-                    rr.TextLog(
-                        f"pred_step_{pred_idx + 1:02d}" if pred_step is not None else "pred_none"
-                    ),
-                )
-                last_pred_idx = pred_idx
-
-            # only update when GT/Pred pair changes
-            compare_key = (gt_idx, pred_idx)
-            if compare_key != last_compare_key:
-                rr.log(
-                    f"{base}/eval/compare",
-                    rr.TextLog(format_compare_text(gt_idx, gt_step, pred_idx, pred_step)),
-                )
-                last_compare_key = compare_key
+            progress = compute_progress(frame_idx, total_frames)
+            semantic_step = pred_raw_step if pred_raw_step is not None else pred_step
+            frame_info = build_frame_info(frame_idx, semantic_step, SEQ_NAME, scene_registry, poses)
+            log_caption_panels(base, SEQ_NAME, frame_info, progress)
+            log_timeline_state(base, frame_idx, total_frames, timeline_runs)
 
             frame_idx += 1
 
