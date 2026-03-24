@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -42,16 +43,16 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_STEPS_PATH = OUTPUT_DIR / f"pred_steps_{SCENE_NAME}.json"
 OUTPUT_RAW_CLIPS_PATH = OUTPUT_DIR / f"pred_raw_clips_{SCENE_NAME}.json"
 
-MODEL_ID = "Qwen/Qwen2.5-VL-3B-Instruct"
+MODEL_ID = os.environ.get("GIGAHANDS_VLM_MODEL_ID", "Qwen/Qwen2.5-VL-3B-Instruct")
 
 # 速度优先参数
 CLIP_LEN_FRAMES = 64
 CLIP_STRIDE_FRAMES = 64
-NUM_SAMPLED_FRAMES = 2
+NUM_SAMPLED_FRAMES = 4
 BATCH_SIZE = 1
 
 # 只输出短 JSON
-MAX_NEW_TOKENS = 24
+MAX_NEW_TOKENS = 160
 DO_SAMPLE = False
 TEMPERATURE = 0.2
 TOP_P = 0.9
@@ -219,20 +220,21 @@ Task:
 3. Choose exactly ONE label from this closed vocabulary:
    [{labels_text}]
 4. Focus on the dominant hand-object action in this clip.
-5. Keep sub_task short, like "grasping the teapot" or "lifting the mug".
-6. Keep interaction very short, ideally one or two words like "grasp" or "lift".
-7. objects must be a JSON list of visible manipulated objects.
-8. current_action must be one short sentence in plain English.
-9. If uncertain, choose the closest label. Use "other" only when necessary.
+5. main_task should describe the overall activity in 1 to 2 natural sentences.
+6. sub_task should name the current phase in 4 to 10 words, such as "pouring tea into the mug".
+7. interaction should be a full sentence describing the hand-object roles if visible.
+8. objects must be a JSON list of visible manipulated objects only. Avoid generic words like "scene", "hand", or "object".
+9. current_action should be 1 to 2 natural sentences that clearly describe what is happening in this clip.
+10. If uncertain, choose the closest label. Use "other" only when no label fits.
 
 Return STRICT JSON only:
 {{
-  "main_task": "one short sentence for the overall task",
-  "sub_task": "one short phrase for this clip",
-  "interaction": "very short interaction phrase",
+  "main_task": "1-2 natural sentences for the overall task",
+  "sub_task": "specific clip-level phase",
+  "interaction": "one sentence describing the interaction",
   "objects": ["object one", "object two"],
   "label": "one_label_from_the_list",
-  "current_action": "one short sentence",
+  "current_action": "1-2 natural sentences",
   "text": "same as current_action"
 }}
 """.strip()
@@ -293,7 +295,154 @@ def normalize_label(label: str) -> str:
     return "other"
 
 
-def normalize_objects(value: Any) -> List[str]:
+def extract_step_text(value: Any) -> str:
+    if isinstance(value, dict):
+        if "text" in value:
+            return extract_step_text(value["text"])
+        if "label" in value:
+            return extract_step_text(value["label"])
+        return json.dumps(value, ensure_ascii=False)
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return stripped
+            return extract_step_text(parsed)
+        return stripped
+
+    if value is None:
+        return ""
+
+    return str(value)
+
+
+def clean_semantic_text(value: Any) -> str:
+    text = extract_step_text(value)
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text)
+    return text.strip(" \n\r\t`")
+
+
+def extract_embedded_step_fields(value: Any) -> Dict[str, str]:
+    if isinstance(value, dict):
+        return {
+            "label": clean_semantic_text(value.get("label", "")),
+            "text": clean_semantic_text(value.get("text", "")),
+        }
+
+    if not isinstance(value, str):
+        return {"label": "", "text": clean_semantic_text(value)}
+
+    stripped = value.strip()
+    label_match = re.search(r'"label"\s*:\s*"([^"]+)', stripped)
+    text_match = re.search(r'"text"\s*:\s*"([^"]+)', stripped, flags=re.DOTALL)
+
+    return {
+        "label": label_match.group(1).strip() if label_match else "",
+        "text": text_match.group(1).strip() if text_match else "",
+    }
+
+
+def extract_partial_json_fields(text: str) -> Dict[str, Any]:
+    fields: Dict[str, Any] = {}
+    for key in ("main_task", "sub_task", "interaction", "label", "current_action", "text"):
+        exact_match = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', text, flags=re.DOTALL)
+        if exact_match:
+            try:
+                fields[key] = json.loads(f'"{exact_match.group(1)}"')
+            except json.JSONDecodeError:
+                fields[key] = exact_match.group(1).strip()
+            continue
+
+        partial_match = re.search(rf'"{key}"\s*:\s*"([^"\r\n]*)', text, flags=re.DOTALL)
+        if partial_match:
+            fields[key] = partial_match.group(1).strip()
+
+    objects_match = re.search(r'"objects"\s*:\s*\[(.*?)\]', text, flags=re.DOTALL)
+    if objects_match:
+        fields["objects"] = re.findall(r'"([^"]+)"', objects_match.group(1))
+
+    return fields
+
+
+def normalize_object_name(name: str) -> List[str]:
+    name = name.lower().replace("-", "_").strip()
+
+    banned_exact = {
+        "transform",
+        "mesh",
+        "transform_mesh",
+        "object",
+        "world",
+        "camera",
+        "scene",
+        "hand",
+        "left hand",
+        "right hand",
+    }
+    if name in banned_exact:
+        return []
+
+    tokens = [t for t in name.split("_") if t]
+    banned_tokens = {"transform", "mesh", "world", "camera", "scene"}
+    if tokens and all(t in banned_tokens for t in tokens):
+        return []
+
+    special_map = {
+        "teapot_with_lid": ["teapot", "lid"],
+        "boxing_bag_stand": ["boxing bag", "stand"],
+    }
+    if name in special_map:
+        return special_map[name]
+
+    drop_tokens = {"with", "and", "transform", "mesh", "object", "objects"}
+    tokens = [t for t in tokens if t not in drop_tokens]
+
+    if not tokens:
+        return []
+
+    return [" ".join(tokens)]
+
+
+def discover_scene_objects(scene_name: str) -> List[str]:
+    pose_dir = GIGAHANDS_ROOT / "object_pose" / scene_name / "pose"
+    if not pose_dir.exists():
+        return []
+
+    object_names = []
+    for path in pose_dir.iterdir():
+        if path.suffix.lower() in {".obj", ".ply", ".glb", ".stl"}:
+            object_names.append(path.stem)
+    return sorted(set(object_names))
+
+
+def build_scene_object_registry(scene_name: str) -> List[Dict[str, Any]]:
+    registry: List[Dict[str, Any]] = []
+    for raw_name in discover_scene_objects(scene_name):
+        labels = normalize_object_name(raw_name)
+        if not labels:
+            continue
+        registry.append({"raw_name": raw_name, "labels": labels})
+    return registry
+
+
+def get_scene_object_labels(scene_registry: Optional[List[Dict[str, Any]]]) -> List[str]:
+    if not scene_registry:
+        return []
+
+    labels: List[str] = []
+    for item in scene_registry:
+        labels.extend(item["labels"])
+    return sorted(set(labels))
+
+
+def normalize_objects(
+    value: Any,
+    scene_registry: Optional[List[Dict[str, Any]]] = None,
+) -> List[str]:
     if isinstance(value, list):
         raw = value
     elif isinstance(value, str):
@@ -314,12 +463,16 @@ def normalize_objects(value: Any) -> List[str]:
     else:
         raw = [value]
 
-    cleaned = []
+    cleaned: List[str] = []
     for item in raw:
-        text = str(item).strip().lower()
-        if not text or text in {"none", "n/a", "unknown"}:
+        text = clean_semantic_text(item).strip().lower()
+        if not text or text in {"none", "n/a", "unknown", "other"}:
             continue
-        cleaned.append(text)
+        cleaned.extend(normalize_object_name(text))
+
+    scene_objects = set(get_scene_object_labels(scene_registry))
+    if scene_objects:
+        cleaned = [item for item in cleaned if item in scene_objects]
 
     deduped = []
     seen = set()
@@ -330,45 +483,75 @@ def normalize_objects(value: Any) -> List[str]:
     return deduped
 
 
-def parse_model_json(raw_text: str) -> Dict[str, Any]:
+def choose_best_text(*values: Any) -> str:
+    invalid_values = {"", "other", "unknown", "none", "n/a", "null"}
+    for value in values:
+        text = clean_semantic_text(value)
+        if text.lower() not in invalid_values:
+            return text
+    return ""
+
+
+def parse_model_json(
+    raw_text: str,
+    scene_name: str,
+    scene_registry: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     raw_text = raw_text.strip()
     json_block = extract_json_block(raw_text)
+    partial_fields = extract_partial_json_fields(raw_text)
+    embedded_fields = extract_embedded_step_fields(raw_text)
+    data: Dict[str, Any] = {}
+    parse_ok = False
 
-    if json_block is None:
-        return {
-            "main_task": infer_main_task(SCENE_NAME),
-            "sub_task": "other",
-            "interaction": "other",
-            "objects": [],
-            "label": "other",
-            "current_action": raw_text[:200] if raw_text else "unparsed response",
-            "text": raw_text[:200] if raw_text else "unparsed response",
-            "parse_ok": False,
-        }
+    if json_block is not None:
+        try:
+            data = json.loads(json_block)
+            parse_ok = True
+        except Exception:
+            data = {}
 
-    try:
-        data = json.loads(json_block)
-    except Exception:
-        return {
-            "main_task": infer_main_task(SCENE_NAME),
-            "sub_task": "other",
-            "interaction": "other",
-            "objects": [],
-            "label": "other",
-            "current_action": raw_text[:200] if raw_text else "json parse failed",
-            "text": raw_text[:200] if raw_text else "json parse failed",
-            "parse_ok": False,
-        }
+    label_source = choose_best_text(
+        data.get("label", ""),
+        partial_fields.get("label", ""),
+        embedded_fields.get("label", ""),
+    )
+    label = normalize_label(label_source)
 
-    label = normalize_label(str(data.get("label", "other")))
-    current_action = str(data.get("current_action", data.get("text", ""))).strip()
+    current_action = choose_best_text(
+        data.get("current_action", ""),
+        data.get("text", ""),
+        partial_fields.get("current_action", ""),
+        partial_fields.get("text", ""),
+        embedded_fields.get("text", ""),
+    )
     if not current_action:
-        current_action = label
+        current_action = label if label != "other" else "unparsed response"
 
-    sub_task = str(data.get("sub_task", label)).strip() or label
-    interaction = str(data.get("interaction", label)).strip() or label
-    main_task = str(data.get("main_task", infer_main_task(SCENE_NAME))).strip() or infer_main_task(SCENE_NAME)
-    objects = normalize_objects(data.get("objects", []))
+    sub_task = choose_best_text(
+        data.get("sub_task", ""),
+        partial_fields.get("sub_task", ""),
+        current_action,
+        label,
+    )
+    interaction = choose_best_text(
+        data.get("interaction", ""),
+        partial_fields.get("interaction", ""),
+        current_action,
+        label,
+    )
+    main_task = choose_best_text(
+        data.get("main_task", ""),
+        partial_fields.get("main_task", ""),
+        infer_main_task(scene_name),
+    )
+
+    objects = normalize_objects(
+        data.get("objects", partial_fields.get("objects", [])),
+        scene_registry=scene_registry,
+    )
+    if not objects:
+        objects = get_scene_object_labels(scene_registry)
 
     return {
         "main_task": main_task,
@@ -378,7 +561,7 @@ def parse_model_json(raw_text: str) -> Dict[str, Any]:
         "label": label,
         "current_action": current_action,
         "text": current_action,
-        "parse_ok": True,
+        "parse_ok": parse_ok,
     }
 
 
@@ -452,6 +635,7 @@ def run_qwen_batch(
     processor,
     batch_clips: List[ClipInfo],
     scene_name: str,
+    scene_registry: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Tuple[str, Dict[str, Any]]]:
     messages_list = [build_messages_for_clip(clip, scene_name) for clip in batch_clips]
 
@@ -505,7 +689,11 @@ def run_qwen_batch(
             skip_special_tokens=True,
             clean_up_tokenization_spaces=True,
         )
-        parsed = parse_model_json(decoded)
+        parsed = parse_model_json(
+            decoded,
+            scene_name=scene_name,
+            scene_registry=scene_registry,
+        )
         outputs.append((decoded, parsed))
 
     return outputs
@@ -518,6 +706,23 @@ def run_qwen_batch(
 def merge_clip_predictions(raw_clip_preds: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not raw_clip_preds:
         return []
+
+    def keyword_set(text: str) -> set[str]:
+        return {
+            token
+            for token in re.findall(r"[a-z]+", text.lower())
+            if len(token) >= 4 and token not in {"with", "from", "into", "their", "while"}
+        }
+
+    def should_merge(prev_item: Dict[str, Any], next_item: Dict[str, Any]) -> bool:
+        if prev_item["label"] != next_item["label"]:
+            return False
+        if prev_item["label"] != "other":
+            return True
+
+        shared_objects = set(prev_item["objects"]) & set(next_item["objects"])
+        shared_keywords = keyword_set(prev_item["sub_task"]) & keyword_set(next_item["sub_task"])
+        return bool(shared_objects or shared_keywords)
 
     merged: List[Dict[str, Any]] = []
 
@@ -534,10 +739,10 @@ def merge_clip_predictions(raw_clip_preds: List[Dict[str, Any]]) -> List[Dict[st
     }
 
     for item in raw_clip_preds[1:]:
-        same_label = item["label"] == current["label"]
-
-        if same_label:
+        if should_merge(current, item):
             current["end"] = item["end"]
+            if len(item["main_task"]) > len(current["main_task"]):
+                current["main_task"] = item["main_task"]
             if len(item["sub_task"]) > len(current["sub_task"]):
                 current["sub_task"] = item["sub_task"]
             if len(item["interaction"]) > len(current["interaction"]):
@@ -599,6 +804,9 @@ def main():
     print(f"Num clips    : {len(clips)}")
     print()
 
+    scene_registry = build_scene_object_registry(SCENE_NAME)
+    print("Scene objects =", get_scene_object_labels(scene_registry))
+
     model, processor = load_model_and_processor(MODEL_ID)
 
     raw_clip_preds: List[Dict[str, Any]] = []
@@ -615,6 +823,7 @@ def main():
             processor=processor,
             batch_clips=batch,
             scene_name=SCENE_NAME,
+            scene_registry=scene_registry,
         )
         dt = time.time() - t0
         print(f"  batch_time = {dt:.2f}s")
