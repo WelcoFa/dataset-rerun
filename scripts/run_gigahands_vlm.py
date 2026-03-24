@@ -48,17 +48,20 @@ MODEL_ID = os.environ.get("GIGAHANDS_VLM_MODEL_ID", "Qwen/Qwen2.5-VL-3B-Instruct
 # 速度优先参数
 CLIP_LEN_FRAMES = 64
 CLIP_STRIDE_FRAMES = 64
-NUM_SAMPLED_FRAMES = 4
-BATCH_SIZE = 1
+NUM_SAMPLED_FRAMES = int(os.environ.get("GIGAHANDS_NUM_SAMPLED_FRAMES", "3"))
+BATCH_SIZE = int(os.environ.get("GIGAHANDS_BATCH_SIZE", "2"))
 
 # 只输出短 JSON
-MAX_NEW_TOKENS = 160
+MAX_NEW_TOKENS = int(os.environ.get("GIGAHANDS_MAX_NEW_TOKENS", "96"))
 DO_SAMPLE = False
 TEMPERATURE = 0.2
 TOP_P = 0.9
 
 # 如果装了 flash-attn，可以设为 True
 USE_FLASH_ATTN = False
+
+# Resize sampled frames before VLM inference. Smaller images are much faster.
+MAX_IMAGE_EDGE = int(os.environ.get("GIGAHANDS_MAX_IMAGE_EDGE", "448"))
 
 # 如果只想先测前 N 个 clip，改成整数，比如 4；全部跑就设 None
 MAX_CLIPS = None
@@ -125,7 +128,18 @@ def read_frame_bgr(cap: cv2.VideoCapture, frame_idx: int):
 
 def bgr_to_pil(frame_bgr) -> Image.Image:
     frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    return Image.fromarray(frame_rgb)
+    image = Image.fromarray(frame_rgb)
+    if MAX_IMAGE_EDGE > 0:
+        width, height = image.size
+        longest_edge = max(width, height)
+        if longest_edge > MAX_IMAGE_EDGE:
+            scale = MAX_IMAGE_EDGE / float(longest_edge)
+            resized_size = (
+                max(1, int(round(width * scale))),
+                max(1, int(round(height * scale))),
+            )
+            image = image.resize(resized_size, Image.BILINEAR)
+    return image
 
 
 def linspace_int(start: int, end: int, n: int) -> List[int]:
@@ -216,26 +230,23 @@ Clip frame range: {start_frame} to {end_frame}
 
 Task:
 1. Treat the images as one short action clip.
-2. Write the semantic fields needed by a ROPedia-style viewer.
+2. Focus only on the clip-specific semantics. The overall scene task is known already.
 3. Choose exactly ONE label from this closed vocabulary:
    [{labels_text}]
 4. Focus on the dominant hand-object action in this clip.
-5. main_task should describe the overall activity in 1 to 2 natural sentences.
-6. sub_task should name the current phase in 4 to 10 words, such as "pouring tea into the mug".
-7. interaction should be a full sentence describing the hand-object roles if visible.
-8. objects must be a JSON list of visible manipulated objects only. Avoid generic words like "scene", "hand", or "object".
-9. current_action should be 1 to 2 natural sentences that clearly describe what is happening in this clip.
-10. If uncertain, choose the closest label. Use "other" only when no label fits.
+5. sub_task should name the current phase in 3 to 8 words, such as "pouring tea into the mug".
+6. interaction should be one concise sentence describing the hand-object roles if visible.
+7. objects must be a JSON list of visible manipulated objects only. Avoid generic words like "scene", "hand", or "object".
+8. current_action should be one concise sentence that clearly describes what is happening in this clip.
+9. If uncertain, choose the closest label. Use "other" only when no label fits.
 
 Return STRICT JSON only:
 {{
-  "main_task": "1-2 natural sentences for the overall task",
   "sub_task": "specific clip-level phase",
   "interaction": "one sentence describing the interaction",
   "objects": ["object one", "object two"],
   "label": "one_label_from_the_list",
-  "current_action": "1-2 natural sentences",
-  "text": "same as current_action"
+  "current_action": "one concise sentence"
 }}
 """.strip()
 
@@ -581,6 +592,9 @@ def load_model_and_processor(model_id: str):
     print("cuda available:", torch.cuda.is_available())
     if torch.cuda.is_available():
         print("gpu name:", torch.cuda.get_device_name(0))
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
 
     kwargs = {
         "torch_dtype": get_torch_dtype(),
@@ -649,12 +663,11 @@ def run_qwen_batch(
     ]
 
     image_inputs_all = []
-    video_inputs_all = []
 
     for messages in messages_list:
         image_inputs, video_inputs = process_vision_info(messages)
         image_inputs_all.append(image_inputs)
-        video_inputs_all.append(video_inputs)
+        del video_inputs
 
     inputs = processor(
         text=texts,
@@ -775,6 +788,8 @@ def merge_clip_predictions(raw_clip_preds: List[Dict[str, Any]]) -> List[Dict[st
 # ============================================================
 
 def main():
+    effective_batch_size = BATCH_SIZE if torch.cuda.is_available() else 1
+
     print("=== run_vlm_gigahands_fast.py ===")
     print("SCENE_NAME        =", SCENE_NAME)
     print("VIDEO_PATH        =", VIDEO_PATH)
@@ -784,8 +799,9 @@ def main():
     print("CLIP_LEN_FRAMES   =", CLIP_LEN_FRAMES)
     print("CLIP_STRIDE_FRAMES=", CLIP_STRIDE_FRAMES)
     print("NUM_SAMPLED_FRAMES=", NUM_SAMPLED_FRAMES)
-    print("BATCH_SIZE        =", BATCH_SIZE)
+    print("BATCH_SIZE        =", effective_batch_size)
     print("MAX_NEW_TOKENS    =", MAX_NEW_TOKENS)
+    print("MAX_IMAGE_EDGE    =", MAX_IMAGE_EDGE)
     print()
 
     if not VIDEO_PATH.exists():
@@ -812,9 +828,9 @@ def main():
     raw_clip_preds: List[Dict[str, Any]] = []
     total_start = time.time()
 
-    for batch_start in range(0, len(clips), BATCH_SIZE):
-        batch = clips[batch_start: batch_start + BATCH_SIZE]
-        batch_end = min(batch_start + BATCH_SIZE, len(clips))
+    for batch_start in range(0, len(clips), effective_batch_size):
+        batch = clips[batch_start: batch_start + effective_batch_size]
+        batch_end = min(batch_start + effective_batch_size, len(clips))
         print(f"Running batch {batch_start + 1}-{batch_end}/{len(clips)}")
 
         t0 = time.time()

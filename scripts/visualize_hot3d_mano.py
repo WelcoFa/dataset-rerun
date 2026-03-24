@@ -25,19 +25,19 @@ if not hasattr(inspect, "getargspec"):
 import numpy as np
 
 # 旧 chumpy / smplx 兼容补丁
-if not hasattr(np, "bool"):
+if "bool" not in np.__dict__:
     np.bool = bool
-if not hasattr(np, "int"):
+if "int" not in np.__dict__:
     np.int = int
-if not hasattr(np, "float"):
+if "float" not in np.__dict__:
     np.float = float
-if not hasattr(np, "complex"):
+if "complex" not in np.__dict__:
     np.complex = complex
-if not hasattr(np, "object"):
+if "object" not in np.__dict__:
     np.object = object
-if not hasattr(np, "str"):
+if "str" not in np.__dict__:
     np.str = str
-if not hasattr(np, "unicode"):
+if "unicode" not in np.__dict__:
     np.unicode = str
 
 import rerun as rr
@@ -326,17 +326,6 @@ def load_object_meshes(object_models_dir: Path, metadata: dict):
         # mesh 居中，后续再应用物体位姿
         center = verts.mean(axis=0)
         verts = verts - center
-
-        print(f"[INFO] {mesh_file.name}")
-        print(f"  verts             : {verts.shape}")
-        print(f"  faces             : {faces.shape}")
-        print(f"  has_uv            : {texcoords is not None}")
-        print(f"  has_texture       : {texture_image is not None}")
-        print(f"  has_vertex_colors : {vertex_colors is not None}")
-        if texture_image is not None:
-            print(f"  texture_shape     : {texture_image.shape}, dtype={texture_image.dtype}")
-        if vertex_colors is not None:
-            print(f"  vertex_color_shape: {vertex_colors.shape}, dtype={vertex_colors.dtype}")
 
         meshes[obj_uid] = {
             "name": obj_name,
@@ -758,15 +747,6 @@ def main():
             log_headset_pose("world/headset/current", headset_row)
 
         frame_counter += 1
-
-    print("=" * 60)
-    print("HOT3D + MANO viewer loaded.")
-    print(f"Sequence         : {SEQUENCE_NAME}")
-    print(f"Frames loaded    : {frame_counter}")
-    print(f"Objects loaded   : {len(object_meshes)}")
-    print(f"Sequence dir     : {SEQUENCE_DIR}")
-    print("=" * 60)
-
 
 if __name__ == "__main__":
     main()
