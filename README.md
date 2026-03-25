@@ -73,6 +73,7 @@ Supported datasets:
 - `hot3d` / `hot3d-mano`
 - `being-h0`
 - `dexwild`
+- `thermohands`
 
 Example commands:
 
@@ -81,6 +82,7 @@ uv run python scripts/visualize_universal_dashboard.py --dataset gigahands
 uv run python scripts/visualize_universal_dashboard.py --dataset hot3d --sequence-name P0001_10a27bf7
 uv run python scripts/visualize_universal_dashboard.py --dataset being-h0 --beingh0-max-samples 200
 uv run python scripts/visualize_universal_dashboard.py --dataset dexwild --dexwild-episode ep_0000
+uv run python scripts/visualize_universal_dashboard.py --dataset thermohands --thermohands-scene-dir data/thermohands/cut_paper
 ```
 
 Useful dataset-specific flags include:
@@ -89,6 +91,7 @@ Useful dataset-specific flags include:
 - HOT3D: `--hot3d-root`, `--sequence-name`, `--frame-stride`, `--device`
 - Being-H0: `--beingh0-subset-dir`, `--beingh0-jsonl`, `--beingh0-start`, `--beingh0-max-samples`
 - DexWild: `--dexwild-hdf5`, `--dexwild-episode`, `--dexwild-max-frames`
+- ThermoHands: `--thermohands-scene-dir`, `--thermohands-stride`, `--thermohands-max-frames`
 
 ## GigaHands Workflow
 

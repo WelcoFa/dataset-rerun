@@ -15,6 +15,7 @@ REPO_ROOT = SCRIPT_DIR.parent
 HOT3D_DEFAULT_ROOT = REPO_ROOT / "data" / "HOT3D" / "hot3d_demo_full"
 BEINGH0_DEFAULT_SUBSET_DIR = REPO_ROOT / "data" / "Being-h0" / "h0_post_train_db_2508" / "pick_duck_blue_lerobot"
 DEXWILD_DEFAULT_HDF5 = REPO_ROOT / "data" / "dexwild" / "robot_pour_data.hdf5"
+THERMOHANDS_DEFAULT_SCENE_DIR = REPO_ROOT / "data" / "thermohands" / "cut_paper"
 
 HAND_BONES = [
     (0, 1), (1, 2), (2, 3), (3, 4),
@@ -62,6 +63,45 @@ def read_image_rgb_unicode_safe(image_path: Path) -> np.ndarray:
     image_bgr = cv2.imdecode(data, cv2.IMREAD_COLOR)
     if image_bgr is None:
         raise FileNotFoundError(f"Failed to decode image: {image_path}")
+    return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+
+
+def read_image_any_unicode_safe(image_path: Path, flags: int) -> np.ndarray:
+    data = np.fromfile(str(image_path), dtype=np.uint8)
+    if data.size == 0:
+        raise FileNotFoundError(f"Failed to read image bytes: {image_path}")
+    image = cv2.imdecode(data, flags)
+    if image is None:
+        raise FileNotFoundError(f"Failed to decode image: {image_path}")
+    return image
+
+
+def normalize_to_u8(image: np.ndarray) -> np.ndarray:
+    image = np.asarray(image)
+    finite = np.isfinite(image)
+    if not finite.any():
+        return np.zeros(image.shape[:2], dtype=np.uint8)
+
+    vals = image[finite].astype(np.float32)
+    lo = float(vals.min())
+    hi = float(vals.max())
+    if hi <= lo:
+        return np.zeros(image.shape[:2], dtype=np.uint8)
+
+    scaled = (image.astype(np.float32) - lo) / (hi - lo)
+    scaled = np.clip(scaled * 255.0, 0.0, 255.0)
+    return scaled.astype(np.uint8)
+
+
+def read_gray_preview_unicode_safe(image_path: Path) -> np.ndarray:
+    image = read_image_any_unicode_safe(image_path, cv2.IMREAD_UNCHANGED)
+    if image.ndim == 3:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return normalize_to_u8(image)
+
+
+def colorize_gray(gray_u8: np.ndarray, colormap: int) -> np.ndarray:
+    image_bgr = cv2.applyColorMap(gray_u8, colormap)
     return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
 
@@ -591,6 +631,129 @@ class DexWildAdapter:
             )
 
 
+class ThermoHandsAdapter:
+    def __init__(self, args):
+        self.args = args
+        self.base = "universal/thermohands"
+        self.viewer_name = "universal_thermohands_dashboard"
+
+    def load(self):
+        self.scene_dir = Path(self.args.thermohands_scene_dir)
+        self.rgb_dir = self.scene_dir / "rgb"
+        self.thermal_dir = self.scene_dir / "thermal"
+        self.ir_dir = self.scene_dir / "ir"
+        self.depth_dir = self.scene_dir / "depth"
+        self.gt_dir = self.scene_dir / "gt_info"
+
+        require_paths([
+            self.scene_dir,
+            self.rgb_dir,
+            self.thermal_dir,
+            self.ir_dir,
+            self.depth_dir,
+            self.gt_dir,
+        ])
+
+        self.stride = max(1, int(self.args.thermohands_stride))
+        self.rgb_files = sorted(self.rgb_dir.glob("*.png"))
+        self.thermal_files = sorted(self.thermal_dir.glob("*.png"))
+        self.ir_files = sorted(self.ir_dir.glob("*.png"))
+        self.depth_files = sorted(self.depth_dir.glob("*.png"))
+        self.gt_files = sorted(self.gt_dir.glob("*.json"))
+
+        self.total_frames = min(
+            len(self.rgb_files),
+            len(self.thermal_files),
+            len(self.ir_files),
+            len(self.depth_files),
+            len(self.gt_files),
+        )
+        if self.total_frames <= 0:
+            raise RuntimeError(f"No aligned ThermoHands frames found in {self.scene_dir}")
+
+        if self.args.thermohands_max_frames > 0:
+            self.total_frames = min(self.total_frames, self.args.thermohands_max_frames)
+
+        self.recording_summary = summary_text(
+            [
+                ("dataset", "thermohands"),
+                ("scene_dir", self.scene_dir.name),
+                ("frames", self.total_frames),
+                ("stride", self.stride),
+                ("modalities", "rgb, thermal, ir, depth"),
+                ("annotations", "kps3D_L, kps3D_R, trans_L, trans_R"),
+            ]
+        )
+
+    def close(self):
+        return None
+
+    def log_static(self):
+        if hasattr(rr, "ViewCoordinates"):
+            try:
+                rr.log(f"{self.base}/world", rr.ViewCoordinates.RIGHT_HAND_Y_DOWN, static=True)
+            except Exception:
+                pass
+
+    def frames(self) -> Iterator[DashboardPanels]:
+        sampled_indices = list(range(0, self.total_frames, self.stride))
+        for step_idx, frame_idx in enumerate(sampled_indices):
+            rr.set_time("frame", sequence=frame_idx)
+
+            rgb = read_image_rgb_unicode_safe(self.rgb_files[frame_idx])
+            thermal = colorize_gray(read_gray_preview_unicode_safe(self.thermal_files[frame_idx]), cv2.COLORMAP_INFERNO)
+            ir = colorize_gray(read_gray_preview_unicode_safe(self.ir_files[frame_idx]), cv2.COLORMAP_BONE)
+            depth = colorize_gray(read_gray_preview_unicode_safe(self.depth_files[frame_idx]), cv2.COLORMAP_TURBO)
+            ann = load_json(self.gt_files[frame_idx])
+
+            rr.log(f"{self.base}/camera/rgb", rr.Image(rgb))
+            rr.log(f"{self.base}/camera/thermal", rr.Image(thermal))
+            rr.log(f"{self.base}/camera/ir", rr.Image(ir))
+            rr.log(f"{self.base}/camera/depth", rr.Image(depth))
+
+            left_pts = np.asarray(ann.get("kps3D_L", []), dtype=np.float32).reshape(-1, 3)
+            right_pts = np.asarray(ann.get("kps3D_R", []), dtype=np.float32).reshape(-1, 3)
+            left_root = np.asarray(ann.get("trans_L", []), dtype=np.float32).reshape(-1, 3)
+            right_root = np.asarray(ann.get("trans_R", []), dtype=np.float32).reshape(-1, 3)
+
+            if len(left_pts) > 0:
+                log_hand_3d(f"{self.base}/world/left_hand_3d", left_pts)
+            if len(right_pts) > 0:
+                log_hand_3d(f"{self.base}/world/right_hand_3d", right_pts)
+            if len(left_root) > 0:
+                rr.log(f"{self.base}/world/left_hand_root", rr.Points3D(left_root, radii=0.01))
+            if len(right_root) > 0:
+                rr.log(f"{self.base}/world/right_hand_root", rr.Points3D(right_root, radii=0.01))
+
+            left_depth = float(left_root[0, 2]) if len(left_root) > 0 else float("nan")
+            right_depth = float(right_root[0, 2]) if len(right_root) > 0 else float("nan")
+            progress = step_idx / float(max(1, len(sampled_indices) - 1))
+            log_scalar(f"{self.base}/dashboard/timeline/left_root_depth_m", left_depth)
+            log_scalar(f"{self.base}/dashboard/timeline/right_root_depth_m", right_depth)
+            log_scalar(f"{self.base}/dashboard/timeline/left_hand_visible", 1.0 if len(left_pts) > 0 else 0.0)
+            log_scalar(f"{self.base}/dashboard/timeline/right_hand_visible", 1.0 if len(right_pts) > 0 else 0.0)
+            log_scalar(f"{self.base}/dashboard/timeline/sample_progress", progress)
+
+            yield DashboardPanels(
+                recording_summary=self.recording_summary,
+                frame_summary=summary_text(
+                    [
+                        ("frame_index", frame_idx),
+                        ("rgb_file", self.rgb_files[frame_idx].name),
+                        ("thermal_file", self.thermal_files[frame_idx].name),
+                        ("ir_file", self.ir_files[frame_idx].name),
+                        ("depth_file", self.depth_files[frame_idx].name),
+                        ("gt_file", self.gt_files[frame_idx].name),
+                    ]
+                ),
+                main_task="ThermoHands multimodal hand pose playback",
+                sub_task=self.scene_dir.name,
+                current_action="Showing RGB, thermal, IR, depth, and 3D left/right hand skeletons.",
+                interaction=f"left_root_depth_m={left_depth:.4f}, right_root_depth_m={right_depth:.4f}",
+                objects=["rgb", "thermal", "ir", "depth", "left hand", "right hand"],
+            )
+
+
 def create_adapter(args):
     if args.dataset == "gigahands":
         return GigahandsAdapter(args)
@@ -600,12 +763,14 @@ def create_adapter(args):
         return BeingH0Adapter(args)
     if args.dataset == "dexwild":
         return DexWildAdapter(args)
+    if args.dataset == "thermohands":
+        return ThermoHandsAdapter(args)
     raise ValueError(f"Unsupported dataset: {args.dataset}")
 
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Universal Rerun dashboard for multiple datasets.")
-    parser.add_argument("--dataset", choices=["gigahands", "hot3d", "hot3d-mano", "being-h0", "dexwild"], required=True)
+    parser.add_argument("--dataset", choices=["gigahands", "hot3d", "hot3d-mano", "being-h0", "dexwild", "thermohands"], required=True)
     parser.add_argument("--seq-name", default="p36-tea-0010")
     parser.add_argument("--cam-name", default="brics-odroid-010_cam0")
     parser.add_argument("--frame-id", default="1727030430697198")
@@ -620,6 +785,9 @@ def build_parser():
     parser.add_argument("--dexwild-hdf5", default=str(DEXWILD_DEFAULT_HDF5))
     parser.add_argument("--dexwild-episode", default="ep_0000")
     parser.add_argument("--dexwild-max-frames", type=int, default=-1)
+    parser.add_argument("--thermohands-scene-dir", default=str(THERMOHANDS_DEFAULT_SCENE_DIR))
+    parser.add_argument("--thermohands-stride", type=int, default=1)
+    parser.add_argument("--thermohands-max-frames", type=int, default=-1)
     return parser
 
 
