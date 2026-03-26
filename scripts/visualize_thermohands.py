@@ -1,23 +1,21 @@
 import argparse
 import json
 from pathlib import Path
+import sys
 
 import cv2
 import numpy as np
 import rerun as rr
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from rerun_viz.core import HAND_BONES, colorize_gray, read_gray_preview_unicode_safe, read_image_rgb_unicode_safe
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
 DEFAULT_SCENE_DIR = REPO_ROOT / "data" / "thermohands" / "cut_paper"
-
-HAND_BONES = [
-    (0, 1), (1, 2), (2, 3), (3, 4),
-    (0, 5), (5, 6), (6, 7), (7, 8),
-    (0, 9), (9, 10), (10, 11), (11, 12),
-    (0, 13), (13, 14), (14, 15), (15, 16),
-    (0, 17), (17, 18), (18, 19), (19, 20),
-]
 
 LEFT_COLOR = np.array([0, 170, 255], dtype=np.uint8)
 RIGHT_COLOR = np.array([255, 90, 90], dtype=np.uint8)
@@ -66,50 +64,6 @@ def list_sorted_files(path: Path, suffix: str) -> list[Path]:
 def load_json(path: Path):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
-
-
-def read_image_unicode_safe(path: Path, flags: int) -> np.ndarray:
-    data = np.fromfile(str(path), dtype=np.uint8)
-    if data.size == 0:
-        raise FileNotFoundError(f"Failed to read bytes: {path}")
-    image = cv2.imdecode(data, flags)
-    if image is None:
-        raise ValueError(f"Failed to decode image: {path}")
-    return image
-
-
-def read_rgb(path: Path) -> np.ndarray:
-    image_bgr = read_image_unicode_safe(path, cv2.IMREAD_COLOR)
-    return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-
-
-def normalize_to_u8(image: np.ndarray) -> np.ndarray:
-    image = np.asarray(image)
-    finite = np.isfinite(image)
-    if not finite.any():
-        return np.zeros(image.shape[:2], dtype=np.uint8)
-
-    vals = image[finite].astype(np.float32)
-    lo = float(vals.min())
-    hi = float(vals.max())
-    if hi <= lo:
-        return np.zeros(image.shape[:2], dtype=np.uint8)
-
-    scaled = (image.astype(np.float32) - lo) / (hi - lo)
-    scaled = np.clip(scaled * 255.0, 0.0, 255.0)
-    return scaled.astype(np.uint8)
-
-
-def read_gray_preview(path: Path) -> np.ndarray:
-    image = read_image_unicode_safe(path, cv2.IMREAD_UNCHANGED)
-    if image.ndim == 3:
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return normalize_to_u8(image)
-
-
-def colorize_gray(gray_u8: np.ndarray, colormap: int) -> np.ndarray:
-    bgr = cv2.applyColorMap(gray_u8, colormap)
-    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
 def log_hand(path: str, points_xyz: np.ndarray, color_rgb: np.ndarray):
@@ -220,10 +174,10 @@ def main():
     for frame_idx in range(0, total_frames, args.stride):
         rr.set_time("frame", sequence=frame_idx)
 
-        rgb = read_rgb(rgb_files[frame_idx])
-        thermal_gray = read_gray_preview(thermal_files[frame_idx])
-        ir_gray = read_gray_preview(ir_files[frame_idx])
-        depth_gray = read_gray_preview(depth_files[frame_idx])
+        rgb = read_image_rgb_unicode_safe(rgb_files[frame_idx])
+        thermal_gray = read_gray_preview_unicode_safe(thermal_files[frame_idx])
+        ir_gray = read_gray_preview_unicode_safe(ir_files[frame_idx])
+        depth_gray = read_gray_preview_unicode_safe(depth_files[frame_idx])
         ann = load_annotation(gt_files[frame_idx])
 
         rr.log("thermohands/camera/rgb", rr.Image(rgb))

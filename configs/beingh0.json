@@ -1,0 +1,15 @@
+{
+  "dataset": "being-h0",
+  "input": "data/Being-h0",
+  "view": {
+    "mode": "both",
+    "spawn": true
+  },
+  "enrichment": {
+    "enabled": []
+  },
+  "dataset_options": {
+    "beingh0_start": 0,
+    "beingh0_max_samples": -1
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "dataset": "gigahands",
+  "input": "data/gigahands",
+  "selection": {
+    "seq_name": "p36-tea-0010",
+    "cam_name": "brics-odroid-010_cam0",
+    "frame_id": "1727030430697198"
+  },
+  "view": {
+    "mode": "both",
+    "spawn": true
+  },
+  "enrichment": {
+    "enabled": ["semantic", "predictions"]
+  },
+  "dataset_options": {}
+}

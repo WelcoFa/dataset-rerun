@@ -1,0 +1,16 @@
+{
+  "dataset": "thermohands",
+  "input": "data/thermohands",
+  "view": {
+    "mode": "both",
+    "spawn": true
+  },
+  "enrichment": {
+    "enabled": []
+  },
+  "dataset_options": {
+    "thermohands_scene_dir": "data/thermohands/cut_paper",
+    "thermohands_stride": 1,
+    "thermohands_max_frames": -1
+  }
+}

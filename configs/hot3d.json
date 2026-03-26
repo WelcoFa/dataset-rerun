@@ -1,0 +1,18 @@
+{
+  "dataset": "hot3d",
+  "input": "data/HOT3D",
+  "selection": {
+    "sequence_name": "P0001_10a27bf7"
+  },
+  "view": {
+    "mode": "both",
+    "spawn": true
+  },
+  "enrichment": {
+    "enabled": []
+  },
+  "dataset_options": {
+    "frame_stride": 10,
+    "device": "cpu"
+  }
+}

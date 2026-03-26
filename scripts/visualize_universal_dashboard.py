@@ -1,41 +1,37 @@
 import argparse
 import importlib
 import json
-from dataclasses import dataclass
 from pathlib import Path
+import sys
 from typing import Iterator, List
 
 import cv2
 import numpy as np
 import rerun as rr
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from rerun_viz.core import (
+    DashboardPanels,
+    colorize_gray,
+    create_shared_blueprint,
+    log_dashboard_panels,
+    log_hand_2d,
+    log_hand_3d,
+    normalize_to_u8,
+    read_gray_preview_unicode_safe,
+    read_image_any_unicode_safe,
+    read_image_rgb_unicode_safe,
+)
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
 HOT3D_DEFAULT_ROOT = REPO_ROOT / "data" / "HOT3D" / "hot3d_demo_full"
 BEINGH0_DEFAULT_SUBSET_DIR = REPO_ROOT / "data" / "Being-h0" / "h0_post_train_db_2508" / "pick_duck_blue_lerobot"
 DEXWILD_DEFAULT_HDF5 = REPO_ROOT / "data" / "dexwild" / "robot_pour_data.hdf5"
 THERMOHANDS_DEFAULT_SCENE_DIR = REPO_ROOT / "data" / "thermohands" / "cut_paper"
-
-HAND_BONES = [
-    (0, 1), (1, 2), (2, 3), (3, 4),
-    (0, 5), (5, 6), (6, 7), (7, 8),
-    (0, 9), (9, 10), (10, 11), (11, 12),
-    (0, 13), (13, 14), (14, 15), (15, 16),
-    (0, 17), (17, 18), (18, 19), (19, 20),
-]
-
-
-@dataclass
-class DashboardPanels:
-    recording_summary: str
-    frame_summary: str
-    main_task: str
-    sub_task: str
-    current_action: str
-    interaction: str
-    objects: List[str]
-
 
 def load_json(path: Path):
     with open(path, "r", encoding="utf-8") as f:
@@ -54,120 +50,6 @@ def summary_text(items: List[tuple[str, object]]) -> str:
 
 def log_scalar(path: str, value: float):
     rr.log(path, rr.Scalars(float(value)))
-
-
-def read_image_rgb_unicode_safe(image_path: Path) -> np.ndarray:
-    data = np.fromfile(str(image_path), dtype=np.uint8)
-    if data.size == 0:
-        raise FileNotFoundError(f"Failed to read image bytes: {image_path}")
-    image_bgr = cv2.imdecode(data, cv2.IMREAD_COLOR)
-    if image_bgr is None:
-        raise FileNotFoundError(f"Failed to decode image: {image_path}")
-    return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-
-
-def read_image_any_unicode_safe(image_path: Path, flags: int) -> np.ndarray:
-    data = np.fromfile(str(image_path), dtype=np.uint8)
-    if data.size == 0:
-        raise FileNotFoundError(f"Failed to read image bytes: {image_path}")
-    image = cv2.imdecode(data, flags)
-    if image is None:
-        raise FileNotFoundError(f"Failed to decode image: {image_path}")
-    return image
-
-
-def normalize_to_u8(image: np.ndarray) -> np.ndarray:
-    image = np.asarray(image)
-    finite = np.isfinite(image)
-    if not finite.any():
-        return np.zeros(image.shape[:2], dtype=np.uint8)
-
-    vals = image[finite].astype(np.float32)
-    lo = float(vals.min())
-    hi = float(vals.max())
-    if hi <= lo:
-        return np.zeros(image.shape[:2], dtype=np.uint8)
-
-    scaled = (image.astype(np.float32) - lo) / (hi - lo)
-    scaled = np.clip(scaled * 255.0, 0.0, 255.0)
-    return scaled.astype(np.uint8)
-
-
-def read_gray_preview_unicode_safe(image_path: Path) -> np.ndarray:
-    image = read_image_any_unicode_safe(image_path, cv2.IMREAD_UNCHANGED)
-    if image.ndim == 3:
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return normalize_to_u8(image)
-
-
-def colorize_gray(gray_u8: np.ndarray, colormap: int) -> np.ndarray:
-    image_bgr = cv2.applyColorMap(gray_u8, colormap)
-    return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-
-
-def create_shared_blueprint(base: str):
-    import rerun.blueprint as rrb
-
-    return rrb.Blueprint(
-        rrb.Horizontal(
-            rrb.Vertical(
-                rrb.Spatial2DView(origin=f"{base}/camera", name="2D View"),
-                rrb.Spatial3DView(origin=f"{base}/world", name="3D View"),
-            ),
-            rrb.Vertical(
-                rrb.Horizontal(
-                    rrb.Vertical(
-                        rrb.TextDocumentView(origin=f"{base}/dashboard/summary/recording", name="Recording"),
-                        rrb.TextDocumentView(origin=f"{base}/dashboard/summary/frame", name="Frame"),
-                        rrb.TextDocumentView(origin=f"{base}/dashboard/details/objects", name="Objects"),
-                    ),
-                    rrb.Vertical(
-                        rrb.TextDocumentView(origin=f"{base}/dashboard/semantic/main_task", name="Main Task"),
-                        rrb.TextDocumentView(origin=f"{base}/dashboard/semantic/sub_task", name="Sub Task"),
-                        rrb.TextDocumentView(origin=f"{base}/dashboard/semantic/current_action", name="Current Action"),
-                        rrb.TextDocumentView(origin=f"{base}/dashboard/details/interaction", name="Interaction"),
-                    ),
-                ),
-                rrb.TimeSeriesView(origin=f"{base}/dashboard/timeline", name="Timeline"),
-            ),
-        ),
-        collapse_panels=True,
-    )
-
-
-def log_dashboard_panels(base: str, panels: DashboardPanels):
-    rr.log(f"{base}/dashboard/summary/recording", rr.TextDocument(panels.recording_summary))
-    rr.log(f"{base}/dashboard/summary/frame", rr.TextDocument(panels.frame_summary))
-    rr.log(f"{base}/dashboard/semantic/main_task", rr.TextDocument(panels.main_task))
-    rr.log(f"{base}/dashboard/semantic/sub_task", rr.TextDocument(panels.sub_task))
-    rr.log(f"{base}/dashboard/semantic/current_action", rr.TextDocument(panels.current_action))
-    rr.log(f"{base}/dashboard/details/interaction", rr.TextDocument(panels.interaction))
-    rr.log(
-        f"{base}/dashboard/details/objects",
-        rr.TextDocument("\n".join(f"- {item}" for item in panels.objects) if panels.objects else "None"),
-    )
-
-
-def log_hand_2d(base_path: str, pts: np.ndarray):
-    rr.log(f"{base_path}/keypoints", rr.Points2D(pts))
-    lines = [
-        np.stack([pts[a], pts[b]], axis=0)
-        for a, b in HAND_BONES
-        if a < len(pts) and b < len(pts)
-    ]
-    if lines:
-        rr.log(f"{base_path}/bones", rr.LineStrips2D(lines))
-
-
-def log_hand_3d(base_path: str, pts: np.ndarray):
-    rr.log(f"{base_path}/keypoints", rr.Points3D(pts))
-    lines = [
-        np.stack([pts[a], pts[b]], axis=0)
-        for a, b in HAND_BONES
-        if a < len(pts) and b < len(pts)
-    ]
-    if lines:
-        rr.log(f"{base_path}/bones", rr.LineStrips3D(lines))
 
 
 class GigahandsAdapter:

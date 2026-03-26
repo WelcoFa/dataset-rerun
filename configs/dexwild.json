@@ -1,0 +1,15 @@
+{
+  "dataset": "dexwild",
+  "input": "data/dexwild",
+  "view": {
+    "mode": "both",
+    "spawn": true
+  },
+  "enrichment": {
+    "enabled": []
+  },
+  "dataset_options": {
+    "dexwild_episode": "ep_0000",
+    "dexwild_max_frames": -1
+  }
+}

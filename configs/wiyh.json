@@ -1,0 +1,19 @@
+{
+  "dataset": "wiyh",
+  "input": "data/wyih",
+  "view": {
+    "mode": "both",
+    "spawn": true
+  },
+  "enrichment": {
+    "enabled": []
+  },
+  "dataset_options": {
+    "action_dir": "data/wyih/action_000",
+    "task_json": "data/wyih/task.json",
+    "stride": 1,
+    "max_frames": -1,
+    "max_points": 50000,
+    "skip_pointcloud": false
+  }
+}
