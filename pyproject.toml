@@ -22,6 +22,18 @@ gigahands-vlm = [
   "Pillow>=10.4",
   "qwen-vl-utils>=0.0.8",
 ]
+wiyh-vlm = [
+  "torch>=2.3",
+  "transformers>=4.44",
+  "Pillow>=10.4",
+  "qwen-vl-utils>=0.0.8",
+]
+multidataset-vlm = [
+  "torch>=2.3",
+  "transformers>=4.44",
+  "Pillow>=10.4",
+  "qwen-vl-utils>=0.0.8",
+]
 hot3d-mano = [
   "torch>=2.3",
   "smplx>=0.1.28",
@@ -32,4 +44,3 @@ dev = [
 
 [tool.uv]
 default-groups = []
-

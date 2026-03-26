@@ -128,6 +128,21 @@ def load_laz_points(path: Path, max_points: int) -> tuple[np.ndarray, np.ndarray
     return points, colors
 
 
+def load_optional_steps(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data if isinstance(data, list) else []
+
+
+def get_current_step(frame_idx: int, steps: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for step in steps:
+        if int(step.get("start_frame", -1)) <= frame_idx <= int(step.get("end_frame", -1)):
+            return step
+    return None
+
+
 def log_pose(path: str, translation: np.ndarray, quat_xyzw: np.ndarray, color: np.ndarray):
     rr.log(path, rr.Transform3D(translation=translation, rotation=rr.Quaternion(xyzw=quat_xyzw)))
     rr.log(f"{path}/origin", rr.Points3D([[0.0, 0.0, 0.0]], colors=[color], radii=0.015))
@@ -198,6 +213,9 @@ class WiyhAdapter(DatasetAdapter):
         self.max_frames = int(options.get("max_frames", -1))
         self.max_points = int(options.get("max_points", 50000))
         self.skip_pointcloud = bool(options.get("skip_pointcloud", False))
+        self.annotations_dir = Path(options.get("annotations_dir", self.action_dir.parent / "annotations"))
+        self.pred_steps_path = self.annotations_dir / f"pred_steps_{self.action_dir.name}.json"
+        self.pred_raw_clips_path = self.annotations_dir / f"pred_raw_clips_{self.action_dir.name}.json"
 
         if self.stride <= 0:
             raise ValueError("WIYH stride must be >= 1")
@@ -262,6 +280,8 @@ class WiyhAdapter(DatasetAdapter):
             self.total_frames = min(self.total_frames, self.max_frames)
 
         self.cot_answer = try_extract_answer(self.cot_text)
+        self.pred_steps = load_optional_steps(self.pred_steps_path)
+        self.pred_raw_clips = load_optional_steps(self.pred_raw_clips_path)
         self.left_traj: list[np.ndarray] = []
         self.right_traj: list[np.ndarray] = []
         self.pointcloud_warning_emitted = False
@@ -372,6 +392,19 @@ class WiyhAdapter(DatasetAdapter):
             if self.cot_answer:
                 interaction = f"{interaction}\npredicted_next_subtask: {self.cot_answer}"
 
+            semantic_step = get_current_step(frame_idx, self.pred_raw_clips) or get_current_step(frame_idx, self.pred_steps)
+            main_task = self.task_description
+            sub_task = self.atomic_descriptions[frame_idx]
+            current_action = self.atomic_statuses[frame_idx]
+            if semantic_step is not None:
+                main_task = str(semantic_step.get("main_task", main_task))
+                sub_task = str(semantic_step.get("sub_task", sub_task))
+                current_action = str(semantic_step.get("current_action", current_action))
+                interaction = str(semantic_step.get("interaction", interaction))
+                semantic_objects = semantic_step.get("objects", [])
+                if isinstance(semantic_objects, list) and semantic_objects:
+                    objects = [str(item) for item in semantic_objects if str(item).strip()]
+
             self.last_frame_panels = DashboardPanels(
                 recording_summary=self.recording_summary,
                 frame_summary="\n".join(
@@ -385,9 +418,9 @@ class WiyhAdapter(DatasetAdapter):
                         f"pointcloud_file: {pointcloud_path.name}",
                     ]
                 ),
-                main_task=self.task_description,
-                sub_task=self.atomic_descriptions[frame_idx],
-                current_action=self.atomic_statuses[frame_idx],
+                main_task=main_task,
+                sub_task=sub_task,
+                current_action=current_action,
                 interaction=interaction,
                 objects=objects,
             )
