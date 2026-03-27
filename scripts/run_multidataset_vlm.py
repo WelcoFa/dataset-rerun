@@ -43,6 +43,8 @@ CANONICAL_LABELS = [
     "other",
 ]
 
+PLACEHOLDER_TEXTS = {"", "other", "unknown", "n/a", "none", "null"}
+
 
 @dataclass
 class ClipInfo:
@@ -205,6 +207,87 @@ def parse_response(raw_text: str, fallback_main_task: str) -> Dict[str, Any]:
     return result
 
 
+def is_meaningful_text(value: str, min_words: int = 2) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if text.lower() in PLACEHOLDER_TEXTS:
+        return False
+    return len(text.split()) >= min_words
+
+
+def normalize_object_name(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def evaluate_validity(item: Dict[str, Any]) -> Dict[str, Any]:
+    objects = item.get("objects", [])
+    normalized_objects = [normalize_object_name(obj) for obj in objects if normalize_object_name(obj)]
+    unique_objects = list(dict.fromkeys(normalized_objects))
+    checks = {
+        "parse_ok": bool(item.get("parse_ok", False)),
+        "label_in_vocab": item.get("label") in CANONICAL_LABELS,
+        "main_task_ok": is_meaningful_text(item.get("main_task", ""), min_words=3),
+        "sub_task_ok": is_meaningful_text(item.get("sub_task", ""), min_words=2),
+        "interaction_ok": is_meaningful_text(item.get("interaction", ""), min_words=3),
+        "current_action_ok": is_meaningful_text(item.get("current_action", ""), min_words=3),
+        "objects_nonempty": len(unique_objects) > 0,
+        "objects_unique": len(unique_objects) == len(normalized_objects),
+        "raw_response_nonempty": bool(str(item.get("raw_response", "")).strip()),
+    }
+    passed = sum(1 for ok in checks.values() if ok)
+    validity_score = passed / float(len(checks))
+    warnings = []
+    if not checks["parse_ok"]:
+        warnings.append("json_parse_failed")
+    if item.get("label") == "other":
+        warnings.append("label_is_other")
+    if not checks["objects_nonempty"]:
+        warnings.append("objects_empty")
+    if not checks["sub_task_ok"]:
+        warnings.append("sub_task_generic")
+    if not checks["interaction_ok"]:
+        warnings.append("interaction_generic")
+    if not checks["current_action_ok"]:
+        warnings.append("current_action_generic")
+    return {
+        "checks": checks,
+        "validity_score": round(validity_score, 4),
+        "warnings": warnings,
+        "normalized_objects": unique_objects,
+    }
+
+
+def summarize_validity(raw_clip_preds: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not raw_clip_preds:
+        return {
+            "num_clips": 0,
+            "avg_validity_score": 0.0,
+            "rates": {},
+            "label_distribution": {},
+            "warning_counts": {},
+        }
+    keys = list(raw_clip_preds[0]["validity"]["checks"].keys())
+    rates = {
+        key: round(sum(1 for item in raw_clip_preds if item["validity"]["checks"].get(key, False)) / len(raw_clip_preds), 4)
+        for key in keys
+    }
+    label_distribution: Dict[str, int] = {}
+    warning_counts: Dict[str, int] = {}
+    for item in raw_clip_preds:
+        label_distribution[item["label"]] = label_distribution.get(item["label"], 0) + 1
+        for warning in item["validity"]["warnings"]:
+            warning_counts[warning] = warning_counts.get(warning, 0) + 1
+    avg_score = sum(float(item["validity"]["validity_score"]) for item in raw_clip_preds) / len(raw_clip_preds)
+    return {
+        "num_clips": len(raw_clip_preds),
+        "avg_validity_score": round(avg_score, 4),
+        "rates": rates,
+        "label_distribution": dict(sorted(label_distribution.items())),
+        "warning_counts": dict(sorted(warning_counts.items())),
+    }
+
+
 def choose_overall_task(dataset: str, context: Dict[str, Any]) -> str:
     if dataset == "gigahands":
         scene = str(context.get("scene_name", "")).lower()
@@ -351,16 +434,19 @@ def run_inference(clips: List[ClipInfo], processor, model) -> List[Dict[str, Any
                 "parse_ok": parsed["parse_ok"],
                 "raw_response": raw_text.strip(),
             }
+            item["validity"] = evaluate_validity(item)
             raw_clip_preds.append(item)
             print(
                 f"  clip {clip.clip_id:04d} | "
                 f"frames {clip.start_frame}-{clip.end_frame} | "
-                f"label={item['label']} | parse_ok={item['parse_ok']}"
+                f"label={item['label']} | parse_ok={item['parse_ok']} | validity={item['validity']['validity_score']:.2f}"
             )
             print(f"    sub_task={item['sub_task']}")
             print(f"    interaction={item['interaction']}")
             print(f"    objects={item['objects']}")
             print(f"    current_action={item['current_action']}")
+            if item["validity"]["warnings"]:
+                print(f"    warnings={item['validity']['warnings']}")
         print()
     return raw_clip_preds
 
@@ -714,13 +800,43 @@ def save_outputs(grouped_preds: Dict[tuple[str, str, Path], List[Dict[str, Any]]
     for (dataset, source_id, output_dir), raw_clip_preds in grouped_preds.items():
         raw_path = output_dir / f"pred_raw_clips_{source_id}.json"
         steps_path = output_dir / f"pred_steps_{source_id}.json"
+        eval_path = output_dir / f"pred_eval_{source_id}.json"
         merged_steps = merge_clips(raw_clip_preds)
+        validity_summary = summarize_validity(raw_clip_preds)
         with open(raw_path, "w", encoding="utf-8") as f:
             json.dump(raw_clip_preds, f, ensure_ascii=False, indent=2)
         with open(steps_path, "w", encoding="utf-8") as f:
             json.dump(merged_steps, f, ensure_ascii=False, indent=2)
+        with open(eval_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "dataset": dataset,
+                    "source_id": source_id,
+                    "summary": validity_summary,
+                    "clips": [
+                        {
+                            "clip_id": item["clip_id"],
+                            "start_frame": item["start_frame"],
+                            "end_frame": item["end_frame"],
+                            "label": item["label"],
+                            "validity_score": item["validity"]["validity_score"],
+                            "warnings": item["validity"]["warnings"],
+                            "checks": item["validity"]["checks"],
+                        }
+                        for item in raw_clip_preds
+                    ],
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
         print(f"[{dataset}] Saved raw clips -> {raw_path}")
         print(f"[{dataset}] Saved merged steps -> {steps_path}")
+        print(
+            f"[{dataset}] Validity summary -> {eval_path} | "
+            f"avg_validity={validity_summary['avg_validity_score']:.2f} | "
+            f"parse_rate={validity_summary['rates'].get('parse_ok', 0.0):.2f}"
+        )
 
 
 def main():
