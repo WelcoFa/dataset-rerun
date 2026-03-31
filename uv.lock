@@ -584,6 +584,18 @@ hot3d-mano = [
     { name = "smplx" },
     { name = "torch" },
 ]
+multidataset-vlm = [
+    { name = "pillow" },
+    { name = "qwen-vl-utils" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+wiyh-vlm = [
+    { name = "pillow" },
+    { name = "qwen-vl-utils" },
+    { name = "torch" },
+    { name = "transformers" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -592,18 +604,26 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python", specifier = ">=4.10" },
     { name = "pillow", marker = "extra == 'gigahands-vlm'", specifier = ">=10.4" },
+    { name = "pillow", marker = "extra == 'multidataset-vlm'", specifier = ">=10.4" },
+    { name = "pillow", marker = "extra == 'wiyh-vlm'", specifier = ">=10.4" },
     { name = "qwen-vl-utils", marker = "extra == 'gigahands-vlm'", specifier = ">=0.0.8" },
+    { name = "qwen-vl-utils", marker = "extra == 'multidataset-vlm'", specifier = ">=0.0.8" },
+    { name = "qwen-vl-utils", marker = "extra == 'wiyh-vlm'", specifier = ">=0.0.8" },
     { name = "rerun-sdk", specifier = ">=0.18" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "scipy", specifier = ">=1.13" },
     { name = "smplx", marker = "extra == 'hot3d-mano'", specifier = ">=0.1.28" },
     { name = "torch", marker = "extra == 'gigahands-vlm'", specifier = ">=2.3" },
     { name = "torch", marker = "extra == 'hot3d-mano'", specifier = ">=2.3" },
+    { name = "torch", marker = "extra == 'multidataset-vlm'", specifier = ">=2.3" },
+    { name = "torch", marker = "extra == 'wiyh-vlm'", specifier = ">=2.3" },
     { name = "transformers", marker = "extra == 'gigahands-vlm'", specifier = ">=4.44" },
+    { name = "transformers", marker = "extra == 'multidataset-vlm'", specifier = ">=4.44" },
+    { name = "transformers", marker = "extra == 'wiyh-vlm'", specifier = ">=4.44" },
     { name = "trimesh", specifier = ">=4.4" },
     { name = "typer", specifier = ">=0.12" },
 ]
-provides-extras = ["gigahands-vlm", "hot3d-mano", "dev"]
+provides-extras = ["gigahands-vlm", "wiyh-vlm", "multidataset-vlm", "hot3d-mano", "dev"]
 
 [[package]]
 name = "networkx"

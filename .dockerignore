@@ -1,0 +1,14 @@
+.git
+.gitignore
+.venv
+.uv-cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+data
+HOMIE-toolkit
+*.rrd
+*.log

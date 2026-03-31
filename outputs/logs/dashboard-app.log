@@ -1,0 +1,4 @@
+2026-03-31 15:17:03,880 INFO Dashboard app listening on http://0.0.0.0:18080
+2026-03-31 15:17:05,781 INFO http 127.0.0.1 - "GET /api/presets HTTP/1.1" 200 -
+2026-03-31 15:17:05,793 INFO http 127.0.0.1 - "GET /api/state HTTP/1.1" 200 -
+2026-03-31 15:17:05,836 INFO http 127.0.0.1 - "GET / HTTP/1.1" 200 -

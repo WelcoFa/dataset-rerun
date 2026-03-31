@@ -522,6 +522,7 @@ def infer_objects(frame_idx: int, seq_name: str, step, scene_registry, poses) ->
 def build_frame_info(frame_idx: int, step, seq_name: str, scene_registry, poses):
     if step is None:
         return {
+            "main_task": infer_main_task(seq_name),
             "sub_task": "No active sub task",
             "interaction": "None",
             "action_text": "No active action",

@@ -1,0 +1,11 @@
+dataset = "gigahands"
+input = "/data/gigahands"
+
+[view]
+spawn = false
+mode = "both"
+
+[dataset_options]
+skip_pointcloud = true
+max_points = 20000
+generic_max_items = 200

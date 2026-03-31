@@ -1,6 +1,6 @@
 {
   "dataset": "hot3d",
-  "input": "data/HOT3D",
+  "input": "/data/HOT3D",
   "selection": {
     "sequence_name": "P0001_10a27bf7"
   },

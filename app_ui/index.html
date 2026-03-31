@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rerun Dashboard App</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <aside class="library-rail">
+    <div class="brand brand-rail">
+      <p class="eyebrow">Dataset Library</p>
+      <h1>Rerun Dashboard</h1>
+      <p>Pick a ready-to-play config and launch it into the viewer.</p>
+    </div>
+    <section class="panel rail-controls">
+      <div class="status-card">
+        <div class="status-row"><span>Status</span><strong id="status-text">idle</strong></div>
+        <div class="status-row"><span>Active</span><strong id="active-item">none</strong></div>
+        <div class="status-row"><span>Viewer</span><a id="viewer-link" href="http://localhost:9090" target="_blank" rel="noreferrer">Open viewer</a></div>
+        <div class="status-row"><span>Recording</span><code id="recording-path">none</code></div>
+      </div>
+      <div class="actions">
+        <label class="checkbox-row">
+          <input id="save-recording-toggle" type="checkbox">
+          <span>Save `.rrd` while running</span>
+        </label>
+        <button id="refresh-btn" type="button">Refresh</button>
+        <button id="stop-btn" type="button" class="danger">Stop Current</button>
+      </div>
+    </section>
+    <section class="panel library-panel">
+      <div class="panel-header">
+        <h2>Ready To Play</h2>
+        <p>Scroll through your available datasets on the left.</p>
+      </div>
+      <div id="items" class="item-grid item-grid-scroll"></div>
+    </section>
+  </aside>
+
+  <main class="workspace">
+    <section class="split workspace-main">
+      <section class="panel viewer-panel">
+        <div class="panel-header">
+          <h2>Viewer</h2>
+          <p>The Rerun viewer still runs on its own port.</p>
+        </div>
+        <iframe id="viewer-frame" src="http://localhost:9090" title="Rerun Viewer"></iframe>
+      </section>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Session Logs</h2>
+          <p>Live stdout/stderr from the selected dashboard process.</p>
+        </div>
+        <pre id="logs" class="logs">No logs yet.</pre>
+      </section>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

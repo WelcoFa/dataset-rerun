@@ -502,7 +502,65 @@ class PatchedGigahandsAdapter(ud.GigahandsAdapter):
     def load(self):
         self.mod.GIGAHANDS_ROOT = self.gigahands_root
         self.mod.ANNOTATIONS_DIR = self.annotations_dir
-        super().load()
+        if not bool(getattr(self.args, "skip_annotations", False)):
+            super().load()
+            return
+
+        m = self.mod
+        m.SEQ_NAME = self.args.seq_name
+        m.CAM_NAME = self.args.cam_name
+        m.FRAME_ID = self.args.frame_id
+        m.VIDEO_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "rgb_vid" / m.CAM_NAME / f"{m.CAM_NAME}_{m.FRAME_ID}.mp4"
+        m.LEFT_2D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_2d" / "left" / "010" / f"{m.CAM_NAME}_{m.FRAME_ID}.jsonl"
+        m.RIGHT_2D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_2d" / "right" / "010" / f"{m.CAM_NAME}_{m.FRAME_ID}.jsonl"
+        m.LEFT_3D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_3d" / "010" / "left.jsonl"
+        m.RIGHT_3D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_3d" / "010" / "right.jsonl"
+        m.MESH_PATH = m.GIGAHANDS_ROOT / "object_pose" / m.SEQ_NAME / "pose" / "teapot_with_lid.obj"
+        m.POSE_PATH = m.GIGAHANDS_ROOT / "object_pose" / m.SEQ_NAME / "pose" / "optimized_pose.json"
+
+        ud.require_paths([
+            m.VIDEO_PATH,
+            m.LEFT_2D_PATH,
+            m.RIGHT_2D_PATH,
+            m.LEFT_3D_PATH,
+            m.RIGHT_3D_PATH,
+            m.MESH_PATH,
+            m.POSE_PATH,
+        ])
+
+        self.left_2d = m.load_2d(m.LEFT_2D_PATH)
+        self.right_2d = m.load_2d(m.RIGHT_2D_PATH)
+        self.left_3d = m.load_3d(m.LEFT_3D_PATH)
+        self.right_3d = m.load_3d(m.RIGHT_3D_PATH)
+        self.mesh_vertices, self.mesh_faces = m.load_mesh(m.MESH_PATH)
+        self.gt_steps = []
+        self.pred_raw_clips = []
+        self.pred_steps = []
+        self.poses = ud.load_json(m.POSE_PATH)
+        self.poses = m.interpolate_poses(self.poses)
+        self.scene_registry = m.build_scene_object_registry(m.SEQ_NAME)
+        self.timeline_runs = []
+
+        self.cap = cv2.VideoCapture(str(m.VIDEO_PATH))
+        if not self.cap.isOpened():
+            raise RuntimeError(f"Cannot open video: {m.VIDEO_PATH}")
+        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if self.total_frames <= 0:
+            self.total_frames = max(len(self.left_2d), len(self.right_2d), len(self.left_3d), len(self.right_3d), 1)
+
+        self.recording_summary = ud.summary_text(
+            [
+                ("dataset", "gigahands"),
+                ("sequence", m.SEQ_NAME),
+                ("camera", m.CAM_NAME),
+                ("frame_id", m.FRAME_ID),
+                ("total_frames", self.total_frames),
+                ("scene_objects", ", ".join(sorted({label for item in self.scene_registry for label in item["labels"]})) or "None"),
+                ("pred_steps", 0),
+                ("pred_raw_clips", 0),
+                ("annotations", "disabled"),
+            ]
+        )
 
 
 def make_known_args(dataset: str) -> SimpleNamespace:
@@ -512,6 +570,7 @@ def make_known_args(dataset: str) -> SimpleNamespace:
 
 def apply_overrides(config_args: SimpleNamespace, cli_args) -> SimpleNamespace:
     overrides = {
+        "skip_annotations": getattr(cli_args, "skip_annotations", None),
         "seq_name": cli_args.seq_name,
         "cam_name": cli_args.cam_name,
         "frame_id": cli_args.frame_id,

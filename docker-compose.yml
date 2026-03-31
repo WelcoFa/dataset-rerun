@@ -1,0 +1,61 @@
+services:
+  rerun-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rerun-viz-dashboard:latest
+    container_name: rerun-dashboard
+    command:
+      - uv
+      - run
+      - python
+      - scripts/serve_dashboard_app.py
+      - --app-port
+      - "8080"
+      - --config-dir
+      - /app/configs
+      - --outputs-dir
+      - /outputs
+      - --grpc-port
+      - "9876"
+      - --viewer-port
+      - "9090"
+    ports:
+      - "${APP_PORT:-8080}:8080"
+      - "${RERUN_WEB_PORT:-9090}:9090"
+      - "${RERUN_GRPC_PORT:-9876}:9876"
+    volumes:
+      - "${DATA_ROOT:-./data}:/data"
+      - "${OUTPUT_ROOT:-./outputs}:/outputs"
+    restart: unless-stopped
+
+  multidataset-vlm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_EXTRAS: multidataset-vlm
+    image: rerun-viz-vlm:latest
+    container_name: rerun-multidataset-vlm
+    command:
+      - uv
+      - run
+      - python
+      - scripts/run_multidataset_vlm.py
+      - --input
+      - /data
+      - --dataset
+      - auto
+    environment:
+      MULTIDATASET_VLM_MODEL_ID: "${MULTIDATASET_VLM_MODEL_ID:-Qwen/Qwen2.5-VL-3B-Instruct}"
+      MULTIDATASET_MAX_NEW_TOKENS: "${MULTIDATASET_MAX_NEW_TOKENS:-128}"
+      MULTIDATASET_MAX_IMAGE_EDGE: "${MULTIDATASET_MAX_IMAGE_EDGE:-448}"
+      MULTIDATASET_BATCH_SIZE: "${MULTIDATASET_BATCH_SIZE:-1}"
+      MULTIDATASET_NUM_SAMPLED_FRAMES: "${MULTIDATASET_NUM_SAMPLED_FRAMES:-3}"
+      HF_HOME: /models/huggingface
+      TRANSFORMERS_CACHE: /models/huggingface
+    volumes:
+      - "${DATA_ROOT:-./data}:/data"
+      - "${MODEL_CACHE_ROOT:-./models}:/models"
+    profiles:
+      - vlm

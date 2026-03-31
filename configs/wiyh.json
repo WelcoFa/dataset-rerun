@@ -1,6 +1,6 @@
 {
   "dataset": "wiyh",
-  "input": "data/wyih",
+  "input": "/data/wyih",
   "view": {
     "mode": "both",
     "spawn": true

@@ -28,6 +28,12 @@ Read the install guide:
 
 - [`docs/install.md`](c:/Users/WelcoFa/Desktop/相能/rerun/docs/install.md)
 
+Read the Docker/NAS guide:
+
+- [`docs/docker.md`](c:/Users/WelcoFa/Desktop/相能/rerun/docs/docker.md)
+
+The Docker dashboard now exposes a basic app shell with ready-to-play config selection and session logs on port `8080`.
+
 Read the CLI reference:
 
 - [`docs/cli-args.md`](c:/Users/WelcoFa/Desktop/相能/rerun/docs/cli-args.md)

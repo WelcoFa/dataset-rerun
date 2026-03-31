@@ -1,6 +1,6 @@
 {
   "dataset": "thermohands",
-  "input": "data/thermohands",
+  "input": "/data/thermohands",
   "view": {
     "mode": "both",
     "spawn": true

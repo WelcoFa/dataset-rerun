@@ -83,7 +83,6 @@ class GigahandsAdapter:
             m.RIGHT_3D_PATH,
             m.MESH_PATH,
             m.POSE_PATH,
-            m.PRED_STEPS_PATH,
         ])
 
         self.left_2d = m.load_2d(m.LEFT_2D_PATH)
@@ -91,9 +90,22 @@ class GigahandsAdapter:
         self.left_3d = m.load_3d(m.LEFT_3D_PATH)
         self.right_3d = m.load_3d(m.RIGHT_3D_PATH)
         self.mesh_vertices, self.mesh_faces = m.load_mesh(m.MESH_PATH)
-        self.gt_steps = m.load_optional_steps(m.GT_STEPS_PATH)
-        self.pred_raw_clips = m.load_optional_steps(m.PRED_RAW_CLIPS_PATH)
-        self.pred_steps = m.load_steps(m.PRED_STEPS_PATH)
+        annotation_warnings = []
+        try:
+            self.gt_steps = m.load_optional_steps(m.GT_STEPS_PATH)
+        except Exception as exc:
+            self.gt_steps = []
+            annotation_warnings.append(f"gt_steps_unavailable: {exc}")
+        try:
+            self.pred_raw_clips = m.load_optional_steps(m.PRED_RAW_CLIPS_PATH)
+        except Exception as exc:
+            self.pred_raw_clips = []
+            annotation_warnings.append(f"pred_raw_clips_unavailable: {exc}")
+        try:
+            self.pred_steps = m.load_steps(m.PRED_STEPS_PATH) if m.PRED_STEPS_PATH.exists() else []
+        except Exception as exc:
+            self.pred_steps = []
+            annotation_warnings.append(f"pred_steps_unavailable: {exc}")
         self.poses = m.interpolate_poses(load_json(m.POSE_PATH))
         self.scene_registry = m.build_scene_object_registry(m.SEQ_NAME)
         self.timeline_runs = []
@@ -115,6 +127,7 @@ class GigahandsAdapter:
                 ("scene_objects", ", ".join(sorted({label for item in self.scene_registry for label in item["labels"]})) or "None"),
                 ("pred_steps", len(self.pred_steps)),
                 ("pred_raw_clips", len(self.pred_raw_clips)),
+                ("annotation_warnings", " | ".join(annotation_warnings) if annotation_warnings else "None"),
             ]
         )
 

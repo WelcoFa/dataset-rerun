@@ -1,6 +1,6 @@
 {
   "dataset": "dexwild",
-  "input": "data/dexwild",
+  "input": "/data/dexwild",
   "view": {
     "mode": "both",
     "spawn": true
