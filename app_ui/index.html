@@ -3,59 +3,126 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Rerun Dashboard App</title>
+  <title>Rerun Dashboard Control Center</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <aside class="library-rail">
-    <div class="brand brand-rail">
-      <p class="eyebrow">Dataset Library</p>
-      <h1>Rerun Dashboard</h1>
-      <p>Pick a ready-to-play config and launch it into the viewer.</p>
-    </div>
-    <section class="panel rail-controls">
-      <div class="status-card">
-        <div class="status-row"><span>Status</span><strong id="status-text">idle</strong></div>
-        <div class="status-row"><span>Active</span><strong id="active-item">none</strong></div>
-        <div class="status-row"><span>Viewer</span><a id="viewer-link" href="http://localhost:9090" target="_blank" rel="noreferrer">Open viewer</a></div>
-        <div class="status-row"><span>Recording</span><code id="recording-path">none</code></div>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-block">
+        <p class="eyebrow">Rerun Docker</p>
+        <h1>Control Center</h1>
+        <p class="brand-copy">Launch one dataset session at a time, watch the viewer, and inspect logs without leaving the browser.</p>
       </div>
-      <div class="actions">
-        <label class="checkbox-row">
-          <input id="save-recording-toggle" type="checkbox">
-          <span>Save `.rrd` while running</span>
-        </label>
-        <button id="refresh-btn" type="button">Refresh</button>
-        <button id="stop-btn" type="button" class="danger">Stop Current</button>
-      </div>
-    </section>
-    <section class="panel library-panel">
-      <div class="panel-header">
-        <h2>Ready To Play</h2>
-        <p>Scroll through your available datasets on the left.</p>
-      </div>
-      <div id="items" class="item-grid item-grid-scroll"></div>
-    </section>
-  </aside>
 
-  <main class="workspace">
-    <section class="split workspace-main">
-      <section class="panel viewer-panel">
-        <div class="panel-header">
-          <h2>Viewer</h2>
-          <p>The Rerun viewer still runs on its own port.</p>
+      <section class="sidebar-card">
+        <div class="sidebar-card-head">
+          <span class="sidebar-card-label">Launch Mode</span>
+          <span id="status-pill" class="status-pill" data-tone="idle">idle</span>
         </div>
-        <iframe id="viewer-frame" src="http://localhost:9090" title="Rerun Viewer"></iframe>
-      </section>
-      <section class="panel">
-        <div class="panel-header">
-          <h2>Session Logs</h2>
-          <p>Live stdout/stderr from the selected dashboard process.</p>
+        <label class="toggle-row">
+          <input id="save-recording-toggle" type="checkbox">
+          <span>Save `.rrd` on next launch</span>
+        </label>
+        <div class="action-stack">
+          <button id="launch-btn" class="btn btn-primary" type="button">Launch Selected</button>
+          <button id="stop-btn" class="btn btn-secondary" type="button">Stop Current</button>
+          <button id="refresh-btn" class="btn btn-ghost" type="button">Refresh Data</button>
         </div>
-        <pre id="logs" class="logs">No logs yet.</pre>
       </section>
-    </section>
-  </main>
+
+      <section class="sidebar-card compact">
+        <p class="sidebar-card-label">Active Preset</p>
+        <strong id="active-item" class="value-strong">none</strong>
+        <p id="last-error" class="muted danger-copy hidden"></p>
+      </section>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Session Operations</p>
+          <h2>Docker Viewer Dashboard</h2>
+        </div>
+        <div class="topbar-actions">
+          <a id="viewer-link" class="btn btn-ghost" href="http://localhost:9090" target="_blank" rel="noreferrer">Open Viewer</a>
+        </div>
+      </header>
+
+      <section class="hero-grid">
+        <article class="metric-card accent">
+          <span class="metric-label">Session State</span>
+          <strong id="status-text" class="metric-value">idle</strong>
+          <p class="metric-copy">Current process lifecycle state from the dashboard server.</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Viewer Endpoint</span>
+          <strong id="viewer-port" class="metric-value">9090</strong>
+          <p id="grpc-url" class="metric-copy">rerun+http://localhost:9876/proxy</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Recording Output</span>
+          <strong id="recording-name" class="metric-value">none</strong>
+          <p id="recording-path" class="metric-copy">No `.rrd` file attached</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Started At</span>
+          <strong id="started-at" class="metric-value">not started</strong>
+          <p class="metric-copy">Launches update automatically while the app polls the backend.</p>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <section id="preset-library" class="panel panel-tall">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Dataset Library</p>
+              <h3>Ready-to-play presets</h3>
+            </div>
+            <span id="preset-count" class="panel-meta">0 presets</span>
+          </div>
+          <div class="toolbar-row">
+            <label class="search-field">
+              <span class="sr-only">Search presets</span>
+              <input id="preset-search" type="search" placeholder="Search dataset, config, input path">
+            </label>
+            <label class="select-field">
+              <span class="sr-only">Filter presets</span>
+              <select id="dataset-filter">
+                <option value="all">All datasets</option>
+              </select>
+            </label>
+          </div>
+          <div id="items" class="card-list"></div>
+        </section>
+
+        <section id="viewer-panel" class="panel panel-wide">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Viewer</p>
+              <h3>Embedded Rerun session</h3>
+            </div>
+            <span class="panel-meta">The viewer continues to run on its own port.</span>
+          </div>
+          <iframe id="viewer-frame" src="http://localhost:9090" title="Rerun Viewer"></iframe>
+        </section>
+
+        <section class="panel panel-wide">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Logs</p>
+              <h3>Session console</h3>
+            </div>
+            <label class="search-field search-field-small">
+              <span class="sr-only">Search logs</span>
+              <input id="log-search" type="search" placeholder="Search logs">
+            </label>
+          </div>
+          <div id="logs" class="log-list empty-state">No logs yet.</div>
+        </section>
+      </section>
+    </main>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>
