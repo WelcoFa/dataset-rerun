@@ -1,6 +1,7 @@
 {
   "dataset": "being-h0",
   "input": "/data/Being-h0",
+  "scenes": "auto",
   "view": {
     "mode": "both",
     "spawn": true

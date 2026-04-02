@@ -1,8 +1,10 @@
 const state = {
   items: [],
   selectedItemId: null,
+  selectedSceneId: null,
   status: "idle",
   activeItem: null,
+  activeSceneId: null,
   viewerUrl: "http://localhost:9090",
   grpcUrl: "rerun+http://localhost:9876/proxy",
   recordingPath: "none",
@@ -14,9 +16,21 @@ const state = {
   presetSearch: "",
   datasetFilter: "all",
   logSearch: "",
+  launchPending: false,
+  layout: {
+    slots: {
+      library: "slot-a",
+      viewer: "slot-b",
+      logs: "slot-c",
+    },
+    leftWidth: 420,
+    topHeight: 620,
+  },
+  dragPanelId: null,
 };
 
 const els = {};
+const LAYOUT_STORAGE_KEY = "rerun-dashboard-layout-v1";
 
 function $(id) {
   return document.getElementById(id);
@@ -65,6 +79,10 @@ function toneForStatus(status) {
   return "idle";
 }
 
+function isDesktopLayout() {
+  return window.matchMedia("(min-width: 1181px)").matches;
+}
+
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
   const payload = await response.json();
@@ -92,6 +110,33 @@ function getVisibleItems() {
       .toLowerCase();
     return haystack.includes(query);
   });
+}
+
+function getSelectedItem() {
+  return state.items.find((item) => item.id === state.selectedItemId) || null;
+}
+
+function chooseSceneId(item, preferredSceneId = null) {
+  const scenes = Array.isArray(item?.scenes) ? item.scenes : [];
+  if (scenes.length === 0) {
+    return null;
+  }
+  if (preferredSceneId && scenes.some((scene) => scene.id === preferredSceneId)) {
+    return preferredSceneId;
+  }
+  if (item.active_scene_id && scenes.some((scene) => scene.id === item.active_scene_id)) {
+    return item.active_scene_id;
+  }
+  if (item.default_scene_id && scenes.some((scene) => scene.id === item.default_scene_id)) {
+    return item.default_scene_id;
+  }
+  return scenes[0].id;
+}
+
+function setSelectedItem(itemId, preferredSceneId = null) {
+  state.selectedItemId = itemId;
+  const item = getSelectedItem();
+  state.selectedSceneId = item ? chooseSceneId(item, preferredSceneId) : null;
 }
 
 function renderDatasetFilter() {
@@ -149,11 +194,38 @@ function renderItems() {
         appendLog(`Cannot select invalid preset ${item.label}: ${item.error || "unknown error"}`);
         return;
       }
-      state.selectedItemId = item.id;
+      setSelectedItem(item.id);
       renderItems();
+      renderSceneSelector();
     });
     els.items.appendChild(button);
   });
+}
+
+function renderSceneSelector() {
+  const item = getSelectedItem();
+  const scenes = Array.isArray(item?.scenes) ? item.scenes : [];
+  if (!item || scenes.length <= 1) {
+    els.sceneSelector.classList.add("hidden");
+    els.sceneSelect.innerHTML = "";
+    els.sceneDescription.textContent = "";
+    els.sceneCount.textContent = "";
+    return;
+  }
+
+  state.selectedSceneId = chooseSceneId(item, state.selectedSceneId);
+  els.sceneSelector.classList.remove("hidden");
+  els.sceneSelect.innerHTML = "";
+  scenes.forEach((scene) => {
+    const option = document.createElement("option");
+    option.value = scene.id;
+    option.textContent = scene.label || scene.id;
+    els.sceneSelect.appendChild(option);
+  });
+  els.sceneSelect.value = state.selectedSceneId || scenes[0].id;
+  const activeScene = scenes.find((scene) => scene.id === els.sceneSelect.value) || scenes[0];
+  els.sceneDescription.textContent = activeScene.description || "Choose which scene to launch for this dataset preset.";
+  els.sceneCount.textContent = `${scenes.length} scenes`;
 }
 
 function renderLogs() {
@@ -183,6 +255,7 @@ function renderStatus() {
   els.statusPill.textContent = state.status;
   els.statusPill.dataset.tone = tone;
   els.activeItem.textContent = state.activeItem || "none";
+  els.activeScene.textContent = state.activeSceneId || "default";
   els.viewerLink.href = state.viewerUrl;
   els.grpcUrl.textContent = state.grpcUrl || "rerun+http://localhost:9876/proxy";
   els.startedAt.textContent = formatDateTime(state.startedAt);
@@ -195,9 +268,15 @@ function renderStatus() {
   const viewerPortMatch = String(state.viewerUrl).match(/:(\d+)/);
   els.viewerPort.textContent = viewerPortMatch ? viewerPortMatch[1] : "custom";
 
+  const controlsDisabled = state.launchPending || state.status === "starting";
+  els.launchBtn.disabled = controlsDisabled;
+  els.stopBtn.disabled = state.launchPending;
+  els.refreshBtn.disabled = state.launchPending;
+
   const viewerSessionKey = [
     state.viewerUrl,
     state.activeItem || "none",
+    state.activeSceneId || "default",
     state.status,
     state.recordingPath || "none",
   ].join("|");
@@ -213,6 +292,185 @@ function renderStatus() {
     els.lastError.textContent = "";
     els.lastError.classList.add("hidden");
   }
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function saveLayout() {
+  try {
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(state.layout));
+  } catch (_) {}
+}
+
+function loadLayout() {
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (!raw) {
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.slots && parsed.leftWidth && parsed.topHeight) {
+      state.layout = {
+        slots: {
+          library: parsed.slots.library || "slot-a",
+          viewer: parsed.slots.viewer || "slot-b",
+          logs: parsed.slots.logs || "slot-c",
+        },
+        leftWidth: Number(parsed.leftWidth) || 420,
+        topHeight: Number(parsed.topHeight) || 620,
+      };
+    }
+  } catch (_) {}
+}
+
+function applyLayout() {
+  if (!isDesktopLayout()) {
+    els.contentGrid.dataset.layoutReady = "false";
+    els.contentGrid.style.gridTemplateColumns = "";
+    els.contentGrid.style.gridTemplateRows = "";
+    els.columnResizer.style.left = "";
+    els.rowResizer.style.left = "";
+    els.rowResizer.style.right = "";
+    els.rowResizer.style.top = "";
+    return;
+  }
+
+  const gridWidth = els.contentGrid.clientWidth;
+  const gridHeight = Math.max(els.contentGrid.clientHeight, 720);
+  const gap = 18;
+  const leftWidth = clamp(state.layout.leftWidth, 320, Math.max(360, gridWidth - 360));
+  const topHeight = clamp(state.layout.topHeight, 260, Math.max(320, gridHeight - 220));
+  state.layout.leftWidth = leftWidth;
+  state.layout.topHeight = topHeight;
+
+  els.contentGrid.dataset.layoutReady = "true";
+  els.contentGrid.style.gridTemplateColumns = `${leftWidth}px minmax(0, 1fr)`;
+  els.contentGrid.style.gridTemplateRows = `${topHeight}px minmax(220px, 1fr)`;
+
+  Object.entries(state.layout.slots).forEach(([panelId, slot]) => {
+    const panel = document.querySelector(`[data-panel-id="${panelId}"]`);
+    if (panel) {
+      panel.style.setProperty("--panel-slot", slot);
+    }
+  });
+
+  els.columnResizer.style.left = `${leftWidth + gap / 2}px`;
+  els.rowResizer.style.left = `${leftWidth + gap}px`;
+  els.rowResizer.style.right = "0";
+  els.rowResizer.style.top = `${topHeight + gap / 2}px`;
+}
+
+function swapPanelSlots(sourcePanelId, targetPanelId) {
+  const nextSlots = { ...state.layout.slots };
+  const sourceSlot = nextSlots[sourcePanelId];
+  const targetSlot = nextSlots[targetPanelId];
+  if (!sourceSlot || !targetSlot || sourceSlot === targetSlot) {
+    return;
+  }
+  nextSlots[sourcePanelId] = targetSlot;
+  nextSlots[targetPanelId] = sourceSlot;
+  state.layout.slots = nextSlots;
+  saveLayout();
+  applyLayout();
+}
+
+function bindLayoutInteractions() {
+  const panels = [...document.querySelectorAll(".dashboard-panel")];
+  panels.forEach((panel) => {
+    const handle = panel.querySelector(".panel-drag-handle");
+    const panelId = panel.dataset.panelId;
+    if (!handle || !panelId) {
+      return;
+    }
+
+    handle.addEventListener("dragstart", (event) => {
+      if (!isDesktopLayout()) {
+        event.preventDefault();
+        return;
+      }
+      state.dragPanelId = panelId;
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", panelId);
+    });
+
+    handle.addEventListener("dragend", () => {
+      state.dragPanelId = null;
+      panels.forEach((item) => item.classList.remove("drop-target"));
+    });
+
+    panel.addEventListener("dragover", (event) => {
+      if (!isDesktopLayout() || !state.dragPanelId || state.dragPanelId === panelId) {
+        return;
+      }
+      event.preventDefault();
+      panel.classList.add("drop-target");
+    });
+
+    panel.addEventListener("dragleave", () => {
+      panel.classList.remove("drop-target");
+    });
+
+    panel.addEventListener("drop", (event) => {
+      if (!isDesktopLayout()) {
+        return;
+      }
+      event.preventDefault();
+      panel.classList.remove("drop-target");
+      const sourcePanelId = state.dragPanelId || event.dataTransfer.getData("text/plain");
+      if (!sourcePanelId || sourcePanelId === panelId) {
+        return;
+      }
+      swapPanelSlots(sourcePanelId, panelId);
+    });
+  });
+
+  const startColumnResize = (event) => {
+    if (!isDesktopLayout()) {
+      return;
+    }
+    event.preventDefault();
+    els.columnResizer.classList.add("active");
+    const onMove = (moveEvent) => {
+      const bounds = els.contentGrid.getBoundingClientRect();
+      state.layout.leftWidth = clamp(moveEvent.clientX - bounds.left, 320, bounds.width - 360);
+      applyLayout();
+    };
+    const onUp = () => {
+      els.columnResizer.classList.remove("active");
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      saveLayout();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const startRowResize = (event) => {
+    if (!isDesktopLayout()) {
+      return;
+    }
+    event.preventDefault();
+    els.rowResizer.classList.add("active");
+    const onMove = (moveEvent) => {
+      const bounds = els.contentGrid.getBoundingClientRect();
+      state.layout.topHeight = clamp(moveEvent.clientY - bounds.top, 260, bounds.height - 220);
+      applyLayout();
+    };
+    const onUp = () => {
+      els.rowResizer.classList.remove("active");
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      saveLayout();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  els.columnResizer.addEventListener("pointerdown", startColumnResize);
+  els.rowResizer.addEventListener("pointerdown", startRowResize);
+  window.addEventListener("resize", () => applyLayout());
 }
 
 function appendLog(message) {
@@ -233,6 +491,7 @@ async function refreshAll() {
   state.items = itemsPayload.items || [];
   state.status = statusPayload.status || "idle";
   state.activeItem = statusPayload.current_item_id;
+  state.activeSceneId = statusPayload.current_scene_id || null;
   state.viewerUrl = statusPayload.viewer_url || state.viewerUrl;
   state.grpcUrl = statusPayload.grpc_url || state.grpcUrl;
   state.recordingPath = statusPayload.recording_path || "none";
@@ -243,16 +502,23 @@ async function refreshAll() {
 
   if (!state.selectedItemId || !state.items.some((item) => item.id === state.selectedItemId && item.valid)) {
     const firstValid = state.items.find((item) => item.valid);
-    state.selectedItemId = firstValid ? firstValid.id : null;
+    setSelectedItem(firstValid ? firstValid.id : null);
+  } else {
+    const selected = getSelectedItem();
+    state.selectedSceneId = selected ? chooseSceneId(selected, state.selectedSceneId) : null;
   }
 
   renderDatasetFilter();
   renderItems();
+  renderSceneSelector();
   renderStatus();
   renderLogs();
 }
 
 async function openSelected() {
+  if (state.launchPending) {
+    return;
+  }
   const selected = state.items.find((item) => item.id === state.selectedItemId);
   if (!selected) {
     appendLog("No preset selected.");
@@ -260,32 +526,50 @@ async function openSelected() {
   }
 
   try {
+    state.launchPending = true;
+    renderStatus();
     await fetchJson("/api/open", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         item_id: selected.id,
+        scene_id: state.selectedSceneId,
         save_recording: state.saveRecording,
       }),
     });
+    const selectedScene =
+      Array.isArray(selected.scenes) && state.selectedSceneId
+        ? selected.scenes.find((scene) => scene.id === state.selectedSceneId)
+        : null;
     appendLog(
       state.saveRecording
-        ? `Started preset ${selected.label} with .rrd recording enabled`
-        : `Started preset ${selected.label} in live viewer mode`,
+        ? `Started preset ${selected.label}${selectedScene ? ` (${selectedScene.label})` : ""} with .rrd recording enabled`
+        : `Started preset ${selected.label}${selectedScene ? ` (${selectedScene.label})` : ""} in live viewer mode`,
     );
     await refreshAll();
   } catch (error) {
     appendLog(`Start failed: ${error.message}`);
+  } finally {
+    state.launchPending = false;
+    renderStatus();
   }
 }
 
 async function stopCurrent() {
+  if (state.launchPending) {
+    return;
+  }
   try {
+    state.launchPending = true;
+    renderStatus();
     await fetchJson("/api/stop", { method: "POST" });
     appendLog("Stopped current session.");
     await refreshAll();
   } catch (error) {
     appendLog(`Stop failed: ${error.message}`);
+  } finally {
+    state.launchPending = false;
+    renderStatus();
   }
 }
 
@@ -319,6 +603,10 @@ function bindEvents() {
     state.datasetFilter = event.target.value;
     renderItems();
   });
+  els.sceneSelect.addEventListener("change", (event) => {
+    state.selectedSceneId = event.target.value || null;
+    renderSceneSelector();
+  });
   els.logSearch.addEventListener("input", (event) => {
     state.logSearch = event.target.value;
     renderLogs();
@@ -330,6 +618,7 @@ function init() {
   els.statusText = $("status-text");
   els.statusPill = $("status-pill");
   els.activeItem = $("active-item");
+  els.activeScene = $("active-scene");
   els.lastError = $("last-error");
   els.viewerLink = $("viewer-link");
   els.viewerPort = $("viewer-port");
@@ -348,8 +637,19 @@ function init() {
   els.datasetFilter = $("dataset-filter");
   els.logSearch = $("log-search");
   els.presetCount = $("preset-count");
+  els.sceneSelector = $("scene-selector");
+  els.sceneSelect = $("scene-select");
+  els.sceneDescription = $("scene-description");
+  els.sceneCount = $("scene-count");
+  els.contentGrid = $("content-grid");
+  els.columnResizer = $("column-resizer");
+  els.rowResizer = $("row-resizer");
 
+  loadLayout();
   bindEvents();
+  bindLayoutInteractions();
+  applyLayout();
+  renderSceneSelector();
   renderStatus();
   renderLogs();
   refreshAll().catch((error) => appendLog(`Initial load failed: ${error.message}`));

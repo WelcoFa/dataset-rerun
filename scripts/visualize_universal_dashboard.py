@@ -52,6 +52,24 @@ def log_scalar(path: str, value: float):
     rr.log(path, rr.Scalars(float(value)))
 
 
+def gigahands_object_id(seq_name: str) -> str:
+    suffix = str(seq_name).rsplit("-", 1)[-1]
+    if suffix.isdigit():
+        return suffix[-3:].zfill(3)
+    raise ValueError(f"Cannot infer GigaHands object id from sequence name: {seq_name}")
+
+
+def resolve_gigahands_mesh_path(gigahands_root: Path, seq_name: str) -> Path:
+    pose_dir = gigahands_root / "object_pose" / seq_name / "pose"
+    primary_meshes = sorted(path for path in pose_dir.glob("*.obj") if path.name != "transform_mesh.obj")
+    if primary_meshes:
+        return primary_meshes[0]
+    fallback_mesh = pose_dir / "transform_mesh.obj"
+    if fallback_mesh.exists():
+        return fallback_mesh
+    return pose_dir / "teapot_with_lid.obj"
+
+
 class GigahandsAdapter:
     def __init__(self, args):
         self.args = args
@@ -64,12 +82,13 @@ class GigahandsAdapter:
         m.SEQ_NAME = self.args.seq_name
         m.CAM_NAME = self.args.cam_name
         m.FRAME_ID = self.args.frame_id
+        object_id = gigahands_object_id(m.SEQ_NAME)
         m.VIDEO_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "rgb_vid" / m.CAM_NAME / f"{m.CAM_NAME}_{m.FRAME_ID}.mp4"
-        m.LEFT_2D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_2d" / "left" / "010" / f"{m.CAM_NAME}_{m.FRAME_ID}.jsonl"
-        m.RIGHT_2D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_2d" / "right" / "010" / f"{m.CAM_NAME}_{m.FRAME_ID}.jsonl"
-        m.LEFT_3D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_3d" / "010" / "left.jsonl"
-        m.RIGHT_3D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_3d" / "010" / "right.jsonl"
-        m.MESH_PATH = m.GIGAHANDS_ROOT / "object_pose" / m.SEQ_NAME / "pose" / "teapot_with_lid.obj"
+        m.LEFT_2D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_2d" / "left" / object_id / f"{m.CAM_NAME}_{m.FRAME_ID}.jsonl"
+        m.RIGHT_2D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_2d" / "right" / object_id / f"{m.CAM_NAME}_{m.FRAME_ID}.jsonl"
+        m.LEFT_3D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_3d" / object_id / "left.jsonl"
+        m.RIGHT_3D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_3d" / object_id / "right.jsonl"
+        m.MESH_PATH = resolve_gigahands_mesh_path(m.GIGAHANDS_ROOT, m.SEQ_NAME)
         m.POSE_PATH = m.GIGAHANDS_ROOT / "object_pose" / m.SEQ_NAME / "pose" / "optimized_pose.json"
         m.GT_STEPS_PATH = m.ANNOTATIONS_DIR / f"gt_steps_{m.SEQ_NAME}.json"
         m.PRED_RAW_CLIPS_PATH = m.ANNOTATIONS_DIR / f"pred_raw_clips_{m.SEQ_NAME}.json"

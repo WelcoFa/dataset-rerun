@@ -510,12 +510,13 @@ class PatchedGigahandsAdapter(ud.GigahandsAdapter):
         m.SEQ_NAME = self.args.seq_name
         m.CAM_NAME = self.args.cam_name
         m.FRAME_ID = self.args.frame_id
+        object_id = ud.gigahands_object_id(m.SEQ_NAME)
         m.VIDEO_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "rgb_vid" / m.CAM_NAME / f"{m.CAM_NAME}_{m.FRAME_ID}.mp4"
-        m.LEFT_2D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_2d" / "left" / "010" / f"{m.CAM_NAME}_{m.FRAME_ID}.jsonl"
-        m.RIGHT_2D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_2d" / "right" / "010" / f"{m.CAM_NAME}_{m.FRAME_ID}.jsonl"
-        m.LEFT_3D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_3d" / "010" / "left.jsonl"
-        m.RIGHT_3D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_3d" / "010" / "right.jsonl"
-        m.MESH_PATH = m.GIGAHANDS_ROOT / "object_pose" / m.SEQ_NAME / "pose" / "teapot_with_lid.obj"
+        m.LEFT_2D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_2d" / "left" / object_id / f"{m.CAM_NAME}_{m.FRAME_ID}.jsonl"
+        m.RIGHT_2D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_2d" / "right" / object_id / f"{m.CAM_NAME}_{m.FRAME_ID}.jsonl"
+        m.LEFT_3D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_3d" / object_id / "left.jsonl"
+        m.RIGHT_3D_PATH = m.GIGAHANDS_ROOT / "hand_pose" / m.SEQ_NAME / "keypoints_3d" / object_id / "right.jsonl"
+        m.MESH_PATH = ud.resolve_gigahands_mesh_path(m.GIGAHANDS_ROOT, m.SEQ_NAME)
         m.POSE_PATH = m.GIGAHANDS_ROOT / "object_pose" / m.SEQ_NAME / "pose" / "optimized_pose.json"
 
         ud.require_paths([

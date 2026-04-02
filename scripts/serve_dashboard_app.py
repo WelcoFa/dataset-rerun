@@ -40,7 +40,19 @@ class PlayableItem:
     input_path: str
     description: str
     valid: bool
+    selection: dict[str, Any]
+    scenes: list["SceneOption"]
+    default_scene_id: str | None = None
     error: str | None = None
+
+
+@dataclass
+class SceneOption:
+    scene_id: str
+    label: str
+    description: str
+    selection: dict[str, Any]
+    dataset_options: dict[str, Any]
 
 
 def utc_now() -> str:
@@ -80,9 +92,11 @@ class DashboardAppState:
         self.grpc_port = grpc_port
         self.logger = logger
         self.lock = threading.RLock()
+        self.lifecycle_lock = threading.RLock()
         self.log_lines: deque[str] = deque(maxlen=300)
         self.process: subprocess.Popen[str] | None = None
         self.current_item_id: str | None = None
+        self.current_scene_id: str | None = None
         self.current_recording: str | None = None
         self.status = "idle"
         self.last_error: str | None = None
@@ -122,7 +136,14 @@ class DashboardAppState:
                 payload = load_config_file(path)
                 dataset = str(payload.get("dataset", "auto"))
                 input_path = str(payload.get("input", ""))
-                description = f"{dataset} | {input_path or 'no input'}"
+                selection = dict(payload.get("selection", {}))
+                dataset_options = dict(payload.get("dataset_options", {}))
+                scenes = self._discover_scenes(payload, selection, dataset_options)
+                default_scene_id = self._select_default_scene_id(scenes, selection, dataset_options)
+                description_parts = [dataset, input_path or "no input"]
+                if len(scenes) > 1:
+                    description_parts.append(f"{len(scenes)} scenes")
+                description = " | ".join(description_parts)
                 items.append(
                     PlayableItem(
                         item_id=item_id,
@@ -132,6 +153,9 @@ class DashboardAppState:
                         input_path=input_path,
                         description=description,
                         valid=True,
+                        selection=selection,
+                        scenes=scenes,
+                        default_scene_id=default_scene_id,
                     )
                 )
             except Exception as exc:
@@ -144,10 +168,445 @@ class DashboardAppState:
                         input_path="",
                         description="Config parse failed",
                         valid=False,
+                        selection={},
+                        scenes=[],
                         error=str(exc),
                     )
                 )
         return items
+
+    def _resolve_input_path(self, value: Any) -> Path | None:
+        if value in {None, ""}:
+            return None
+        raw_value = str(value)
+        normalized = raw_value.replace("\\", "/")
+        if normalized == "/data":
+            docker_path = Path("/data")
+            if docker_path.exists():
+                return docker_path
+            fallback = (REPO_ROOT / "data").resolve()
+            return fallback if fallback.exists() else docker_path
+        if normalized.startswith("/data/"):
+            docker_path = Path(normalized)
+            if docker_path.exists():
+                return docker_path
+            fallback = (REPO_ROOT / "data" / normalized.removeprefix("/data/")).resolve()
+            return fallback if fallback.exists() else docker_path
+        path = Path(raw_value)
+        if path.is_absolute():
+            if path.exists():
+                return path
+            return path
+        return (REPO_ROOT / path).resolve()
+
+    def _normalize_scene_entry(self, entry: Any) -> SceneOption | None:
+        if not isinstance(entry, dict):
+            return None
+
+        raw_selection = entry.get("selection", {})
+        selection = dict(raw_selection) if isinstance(raw_selection, dict) else {}
+        for key in ("seq_name", "cam_name", "frame_id", "sequence_name"):
+            if key in entry and key not in selection:
+                selection[key] = entry[key]
+
+        if not selection:
+            return None
+
+        raw_dataset_options = entry.get("dataset_options", {})
+        dataset_options = dict(raw_dataset_options) if isinstance(raw_dataset_options, dict) else {}
+        scene_id = str(entry.get("id") or selection.get("seq_name") or selection.get("sequence_name") or "").strip()
+        if not scene_id:
+            return None
+
+        label = str(entry.get("label") or scene_id).strip() or scene_id
+        description = str(entry.get("description") or "").strip()
+        return SceneOption(
+            scene_id=scene_id,
+            label=label,
+            description=description,
+            selection=selection,
+            dataset_options=dataset_options,
+        )
+
+    def _looks_like_gigahands_root(self, path: Path) -> bool:
+        return path.is_dir() and (path / "hand_pose").is_dir() and (path / "object_pose").is_dir()
+
+    def _gigahands_object_id(self, seq_name: str) -> str:
+        suffix = str(seq_name).rsplit("-", 1)[-1]
+        if suffix.isdigit():
+            return suffix[-3:].zfill(3)
+        raise ValueError(f"Cannot infer GigaHands object id from sequence name: {seq_name}")
+
+    def _scene_assets_exist(self, root: Path, seq_name: str, cam_name: str, frame_id: str) -> bool:
+        object_id = self._gigahands_object_id(seq_name)
+        hand_root = root / "hand_pose" / seq_name
+        required = [
+            hand_root / "rgb_vid" / cam_name / f"{cam_name}_{frame_id}.mp4",
+            hand_root / "keypoints_2d" / "left" / object_id / f"{cam_name}_{frame_id}.jsonl",
+            hand_root / "keypoints_2d" / "right" / object_id / f"{cam_name}_{frame_id}.jsonl",
+            hand_root / "keypoints_3d" / object_id / "left.jsonl",
+            hand_root / "keypoints_3d" / object_id / "right.jsonl",
+        ]
+        return all(path.exists() for path in required)
+
+    def _find_gigahands_scene_selection(self, root: Path, seq_name: str) -> dict[str, str] | None:
+        object_id = self._gigahands_object_id(seq_name)
+        seq_dir = root / "hand_pose" / seq_name
+        left_dir = seq_dir / "keypoints_2d" / "left" / object_id
+        right_dir = seq_dir / "keypoints_2d" / "right" / object_id
+        rgb_vid_dir = seq_dir / "rgb_vid"
+        if not left_dir.is_dir() or not right_dir.is_dir() or not rgb_vid_dir.is_dir():
+            return None
+
+        left_stems = {path.stem for path in left_dir.glob("*.jsonl")}
+        right_stems = {path.stem for path in right_dir.glob("*.jsonl")}
+        common_stems = left_stems & right_stems
+        if not common_stems:
+            return None
+
+        for cam_dir in sorted(rgb_vid_dir.iterdir()):
+            if not cam_dir.is_dir():
+                continue
+            for video_path in sorted(cam_dir.glob("*.mp4")):
+                if video_path.stem not in common_stems:
+                    continue
+                prefix = f"{cam_dir.name}_"
+                frame_id = video_path.stem[len(prefix):] if video_path.stem.startswith(prefix) else video_path.stem
+                if self._scene_assets_exist(root, seq_name, cam_dir.name, frame_id):
+                    return {
+                        "seq_name": seq_name,
+                        "cam_name": cam_dir.name,
+                        "frame_id": frame_id,
+                    }
+
+        for stem in sorted(common_stems):
+            if "_cam" not in stem:
+                continue
+            cam_name, frame_id = stem.rsplit("_", 1)
+            if self._scene_assets_exist(root, seq_name, cam_name, frame_id):
+                return {
+                    "seq_name": seq_name,
+                    "cam_name": cam_name,
+                    "frame_id": frame_id,
+                }
+        return None
+
+    def _discover_gigahands_scenes(self, payload: dict[str, Any], selection: dict[str, Any]) -> list[SceneOption]:
+        input_path = self._resolve_input_path(payload.get("input"))
+        if input_path is None or not input_path.exists():
+            return []
+
+        root = None
+        annotations_dir = None
+        if input_path.name == "gigahands" and (input_path / "gigahands_demo_all").is_dir():
+            root = input_path / "gigahands_demo_all"
+            annotations_dir = input_path / "annotations"
+        elif self._looks_like_gigahands_root(input_path):
+            root = input_path
+            annotations_dir = input_path.parent / "annotations"
+
+        if root is None or annotations_dir is None:
+            return []
+
+        hand_pose_dir = root / "hand_pose"
+        if not hand_pose_dir.is_dir():
+            return []
+
+        scenes: list[SceneOption] = []
+        for seq_dir in sorted(hand_pose_dir.iterdir()):
+            if not seq_dir.is_dir():
+                continue
+            chosen = None
+            if seq_dir.name == str(selection.get("seq_name", "")):
+                candidate_cam = str(selection.get("cam_name") or "")
+                candidate_frame = str(selection.get("frame_id") or "")
+                if candidate_cam and candidate_frame and self._scene_assets_exist(root, seq_dir.name, candidate_cam, candidate_frame):
+                    chosen = {
+                        "seq_name": seq_dir.name,
+                        "cam_name": candidate_cam,
+                        "frame_id": candidate_frame,
+                    }
+            if chosen is None:
+                chosen = self._find_gigahands_scene_selection(root, seq_dir.name)
+            if chosen is None:
+                continue
+
+            cam_name = chosen["cam_name"]
+            frame_id = chosen["frame_id"]
+            has_semantics = any(
+                candidate.exists()
+                for candidate in (
+                    annotations_dir / f"pred_steps_{seq_dir.name}.json",
+                    annotations_dir / f"pred_raw_clips_{seq_dir.name}.json",
+                )
+            )
+            description = f"camera {cam_name}"
+            description = f"{description} | semantic json ready" if has_semantics else f"{description} | no semantic json"
+            scenes.append(
+                SceneOption(
+                    scene_id=seq_dir.name,
+                    label=seq_dir.name,
+                    description=description,
+                    selection=chosen,
+                    dataset_options={},
+                )
+            )
+        return scenes
+
+    def _discover_thermohands_scenes(self, payload: dict[str, Any], dataset_options: dict[str, Any]) -> list[SceneOption]:
+        input_path = self._resolve_input_path(payload.get("input"))
+        if input_path is None or not input_path.exists() or not input_path.is_dir():
+            return []
+
+        configured_scene_dir = str(dataset_options.get("thermohands_scene_dir", "")).replace("\\", "/")
+        scenes: list[SceneOption] = []
+        for child in sorted(input_path.iterdir()):
+            if not child.is_dir():
+                continue
+            if not all((child / name).is_dir() for name in ("rgb", "thermal", "ir", "depth", "gt_info")):
+                continue
+            scene_dir_value = f"/data/thermohands/{child.name}"
+            description = f"scene {child.name}"
+            scenes.append(
+                SceneOption(
+                    scene_id=child.name,
+                    label=child.name,
+                    description=description,
+                    selection={},
+                    dataset_options={"thermohands_scene_dir": scene_dir_value},
+                )
+            )
+
+        if configured_scene_dir:
+            for scene in scenes:
+                configured_name = Path(configured_scene_dir).name
+                if scene.scene_id == configured_name:
+                    scene.description = f"{scene.description} | default"
+                    break
+        return scenes
+
+    def _discover_hot3d_scenes(self, payload: dict[str, Any], selection: dict[str, Any]) -> list[SceneOption]:
+        input_path = self._resolve_input_path(payload.get("input"))
+        if input_path is None or not input_path.exists() or not input_path.is_dir():
+            return []
+
+        candidate_root = input_path / "hot3d_demo_full" if (input_path / "hot3d_demo_full").is_dir() else input_path
+        required_root_dirs = ("object_models", "mano_models")
+        if not all((candidate_root / name).is_dir() for name in required_root_dirs):
+            return []
+
+        configured_sequence = str(selection.get("sequence_name", ""))
+        scenes: list[SceneOption] = []
+        for child in sorted(candidate_root.iterdir()):
+            if not child.is_dir():
+                continue
+            if not (child / "hand_data").is_dir() or not (child / "ground_truth").is_dir():
+                continue
+            description = f"sequence {child.name}"
+            if child.name == configured_sequence:
+                description = f"{description} | default"
+            scenes.append(
+                SceneOption(
+                    scene_id=child.name,
+                    label=child.name,
+                    description=description,
+                    selection={"sequence_name": child.name},
+                    dataset_options={},
+                )
+            )
+        return scenes
+
+    def _discover_beingh0_scenes(self, payload: dict[str, Any], dataset_options: dict[str, Any]) -> list[SceneOption]:
+        input_path = self._resolve_input_path(payload.get("input"))
+        if input_path is None or not input_path.exists() or not input_path.is_dir():
+            return []
+
+        base = input_path / "h0_post_train_db_2508" if (input_path / "h0_post_train_db_2508").is_dir() else input_path
+        configured_subset = str(dataset_options.get("beingh0_subset_dir", "")).replace("\\", "/")
+        scenes: list[SceneOption] = []
+        for child in sorted(base.iterdir()):
+            if not child.is_dir() or not (child / "images").is_dir():
+                continue
+            jsonl_path = next(iter(sorted(child.glob("*_train.jsonl"))), None)
+            if jsonl_path is None:
+                continue
+            description = f"subset {child.name}"
+            if child.name == Path(configured_subset).name:
+                description = f"{description} | default"
+            scenes.append(
+                SceneOption(
+                    scene_id=child.name,
+                    label=child.name,
+                    description=description,
+                    selection={},
+                    dataset_options={
+                        "beingh0_subset_dir": f"/data/Being-h0/h0_post_train_db_2508/{child.name}",
+                        "beingh0_jsonl": f"/data/Being-h0/h0_post_train_db_2508/{child.name}/{jsonl_path.name}",
+                    },
+                )
+            )
+        return scenes
+
+    def _discover_dexwild_scenes(self, payload: dict[str, Any], dataset_options: dict[str, Any]) -> list[SceneOption]:
+        input_path = self._resolve_input_path(payload.get("input"))
+        if input_path is None or not input_path.exists():
+            return []
+
+        hdf5_path = None
+        if input_path.is_file() and input_path.suffix.lower() in {".hdf5", ".h5"}:
+            hdf5_path = input_path
+        elif input_path.is_dir():
+            for candidate in sorted(input_path.glob("*.hdf5")) + sorted(input_path.glob("*.h5")):
+                hdf5_path = candidate
+                break
+        if hdf5_path is None or not hdf5_path.exists():
+            return []
+
+        try:
+            import h5py
+        except ImportError:
+            return []
+
+        configured_episode = str(dataset_options.get("dexwild_episode", ""))
+        scenes: list[SceneOption] = []
+        with h5py.File(hdf5_path, "r") as f:
+            for episode_name in sorted(f.keys()):
+                description = f"episode {episode_name}"
+                if episode_name == configured_episode:
+                    description = f"{description} | default"
+                scenes.append(
+                    SceneOption(
+                        scene_id=episode_name,
+                        label=episode_name,
+                        description=description,
+                        selection={},
+                        dataset_options={
+                            "dexwild_hdf5": f"/data/dexwild/{hdf5_path.name}",
+                            "dexwild_episode": episode_name,
+                        },
+                    )
+                )
+        return scenes
+
+    def _discover_wiyh_scenes(self, payload: dict[str, Any], dataset_options: dict[str, Any]) -> list[SceneOption]:
+        input_path = self._resolve_input_path(payload.get("input"))
+        if input_path is None or not input_path.exists() or not input_path.is_dir():
+            return []
+
+        task_json_path = f"/data/wyih/task.json"
+        configured_action_dir = str(dataset_options.get("action_dir", "")).replace("\\", "/")
+        scenes: list[SceneOption] = []
+        for child in sorted(input_path.iterdir()):
+            if not child.is_dir() or not (child / "dataset.hdf5").exists():
+                continue
+            description = f"action {child.name}"
+            if child.name == Path(configured_action_dir).name:
+                description = f"{description} | default"
+            scenes.append(
+                SceneOption(
+                    scene_id=child.name,
+                    label=child.name,
+                    description=description,
+                    selection={},
+                    dataset_options={
+                        "action_dir": f"/data/wyih/{child.name}",
+                        "task_json": task_json_path,
+                    },
+                )
+            )
+        return scenes
+
+    def _discover_scenes(
+        self,
+        payload: dict[str, Any],
+        selection: dict[str, Any],
+        dataset_options: dict[str, Any],
+    ) -> list[SceneOption]:
+        raw_scenes = payload.get("scenes")
+        if isinstance(raw_scenes, list):
+            normalized = [scene for scene in (self._normalize_scene_entry(entry) for entry in raw_scenes) if scene is not None]
+            if normalized:
+                return normalized
+
+        auto_requested = raw_scenes is None or raw_scenes == "" or raw_scenes == "auto"
+        if isinstance(raw_scenes, dict):
+            auto_requested = str(raw_scenes.get("source", "")).lower() in {"auto", "detect", "discover"}
+
+        dataset = str(payload.get("dataset", "auto")).lower()
+        if auto_requested and dataset == "gigahands":
+            discovered = self._discover_gigahands_scenes(payload, selection)
+            if discovered:
+                return discovered
+        if auto_requested and dataset == "thermohands":
+            discovered = self._discover_thermohands_scenes(payload, dataset_options)
+            if discovered:
+                return discovered
+        if auto_requested and dataset == "hot3d":
+            discovered = self._discover_hot3d_scenes(payload, selection)
+            if discovered:
+                return discovered
+        if auto_requested and dataset == "being-h0":
+            discovered = self._discover_beingh0_scenes(payload, dataset_options)
+            if discovered:
+                return discovered
+        if auto_requested and dataset == "dexwild":
+            discovered = self._discover_dexwild_scenes(payload, dataset_options)
+            if discovered:
+                return discovered
+        if auto_requested and dataset == "wiyh":
+            discovered = self._discover_wiyh_scenes(payload, dataset_options)
+            if discovered:
+                return discovered
+
+        normalized_selection = self._normalize_scene_entry({"id": selection.get("seq_name") or "default", "selection": selection})
+        return [normalized_selection] if normalized_selection is not None else []
+
+    def _select_default_scene_id(
+        self,
+        scenes: list[SceneOption],
+        selection: dict[str, Any],
+        dataset_options: dict[str, Any],
+    ) -> str | None:
+        if not scenes:
+            return None
+        for scene in scenes:
+            if scene.selection == selection:
+                return scene.scene_id
+        target_seq = selection.get("seq_name") or selection.get("sequence_name")
+        for scene in scenes:
+            scene_seq = scene.selection.get("seq_name") or scene.selection.get("sequence_name")
+            if scene_seq == target_seq:
+                return scene.scene_id
+        configured_scene_dir = str(dataset_options.get("thermohands_scene_dir", "")).replace("\\", "/")
+        if configured_scene_dir:
+            configured_name = Path(configured_scene_dir).name
+            for scene in scenes:
+                if scene.scene_id == configured_name:
+                    return scene.scene_id
+        configured_subset = str(dataset_options.get("beingh0_subset_dir", "")).replace("\\", "/")
+        if configured_subset:
+            configured_name = Path(configured_subset).name
+            for scene in scenes:
+                if scene.scene_id == configured_name:
+                    return scene.scene_id
+        configured_episode = str(dataset_options.get("dexwild_episode", ""))
+        if configured_episode:
+            for scene in scenes:
+                if scene.scene_id == configured_episode:
+                    return scene.scene_id
+        configured_action_dir = str(dataset_options.get("action_dir", "")).replace("\\", "/")
+        if configured_action_dir:
+            configured_name = Path(configured_action_dir).name
+            for scene in scenes:
+                if scene.scene_id == configured_name:
+                    return scene.scene_id
+        return scenes[0].scene_id
+
+    def _get_scene_for_item(self, item: PlayableItem, scene_id: str | None) -> SceneOption | None:
+        chosen_id = scene_id or item.default_scene_id
+        if chosen_id is None:
+            return None
+        return next((scene for scene in item.scenes if scene.scene_id == chosen_id), None)
 
     def list_items(self) -> list[dict[str, Any]]:
         with self.lock:
@@ -161,7 +620,19 @@ class DashboardAppState:
                     "description": item.description,
                     "valid": item.valid,
                     "error": item.error,
+                    "selection": item.selection,
+                    "default_scene_id": item.default_scene_id,
+                    "scenes": [
+                        {
+                            "id": scene.scene_id,
+                            "label": scene.label,
+                            "description": scene.description,
+                            "selection": scene.selection,
+                        }
+                        for scene in item.scenes
+                    ],
                     "active": item.item_id == self.current_item_id and self.status in {"starting", "running"},
+                    "active_scene_id": self.current_scene_id if item.item_id == self.current_item_id else None,
                 }
                 for item in self.items
             ]
@@ -193,6 +664,7 @@ class DashboardAppState:
             return {
                 "status": self.status,
                 "current_item_id": self.current_item_id,
+                "current_scene_id": self.current_scene_id,
                 "started_at": self.started_at,
                 "viewer_url": viewer_url,
                 "grpc_url": grpc_url,
@@ -221,83 +693,98 @@ class DashboardAppState:
     def _watch_process(self, process: subprocess.Popen[str], item_id: str) -> None:
         exit_code = process.wait()
         with self.lock:
-            if self.process is process:
-                self.status = "stopped" if exit_code == 0 else "failed"
-                if exit_code != 0 and self.last_error is None:
-                    self.last_error = f"Dashboard process exited with code {exit_code}"
-                self.process = None
+                if self.process is process:
+                    self.status = "stopped" if exit_code == 0 else "failed"
+                    if exit_code != 0 and self.last_error is None:
+                        self.last_error = f"Dashboard process exited with code {exit_code}"
+                    self.process = None
                 if exit_code == 0:
                     self.current_item_id = None
+                    self.current_scene_id = None
         self._append_log(f"dashboard process for '{item_id}' exited with code {exit_code}")
 
-    def stop_current(self) -> None:
+    def _stop_current_locked(self) -> None:
         with self.lock:
             process = self.process
-        if process is None:
-            return
+            if process is None:
+                return
 
-        self._append_log("stopping current dashboard process")
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            self._append_log("dashboard process did not stop in time; killing it")
-            process.kill()
-            process.wait(timeout=5)
-        finally:
+            self._append_log("stopping current dashboard process")
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self._append_log("dashboard process did not stop in time; killing it")
+                process.kill()
+                process.wait(timeout=5)
+            finally:
+                    if self.process is process:
+                        self.process = None
+                        self.status = "idle"
+                        self.current_item_id = None
+                        self.current_scene_id = None
+                        self.current_recording = None
+                        self.started_at = None
+            self._wait_for_ports_to_release()
+
+    def stop_current(self) -> None:
+        with self.lifecycle_lock:
+            self._stop_current_locked()
+
+    def start_item(self, item_id: str, *, scene_id: str | None = None, save_recording: bool = False) -> dict[str, Any]:
+        with self.lifecycle_lock:
+            item = next((item for item in self.items if item.item_id == item_id), None)
+            if item is None:
+                raise ValueError(f"Unknown item: {item_id}")
+            if not item.valid:
+                raise ValueError(f"Config '{item_id}' is invalid: {item.error}")
+            scene = self._get_scene_for_item(item, scene_id)
+            if scene_id is not None and scene is None:
+                raise ValueError(f"Unknown scene '{scene_id}' for config '{item_id}'")
+
+            self._stop_current_locked()
+
+            recording_path = self.outputs_dir / f"{item.path.stem}.rrd" if save_recording else None
+            cmd = [
+                sys.executable,
+                str(SERVE_SCRIPT),
+                "--config",
+                str(item.path),
+                "--web-port",
+                str(self.viewer_port),
+                "--grpc-port",
+                str(self.grpc_port),
+                "--keep-alive",
+            ]
+            if scene is not None:
+                cmd.extend(["--selection-json", json.dumps(scene.selection, ensure_ascii=False)])
+                if scene.dataset_options:
+                    cmd.extend(["--dataset-options-json", json.dumps(scene.dataset_options, ensure_ascii=False)])
+            if recording_path is not None:
+                cmd.extend(["--save-recording", str(recording_path)])
+
+            env = os.environ.copy()
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=str(REPO_ROOT),
+                env=env,
+            )
+
             with self.lock:
-                if self.process is process:
-                    self.process = None
-                    self.status = "idle"
-                    self.current_item_id = None
-                    self.current_recording = None
-                    self.started_at = None
-        self._wait_for_ports_to_release()
+                self.process = process
+                self.current_item_id = item_id
+                self.current_scene_id = scene.scene_id if scene is not None else None
+                self.current_recording = str(recording_path) if recording_path is not None else None
+                self.status = "starting"
+                self.started_at = utc_now()
+                self.last_error = None
+                self.log_lines.clear()
 
-    def start_item(self, item_id: str, *, save_recording: bool = False) -> dict[str, Any]:
-        item = next((item for item in self.items if item.item_id == item_id), None)
-        if item is None:
-            raise ValueError(f"Unknown item: {item_id}")
-        if not item.valid:
-            raise ValueError(f"Config '{item_id}' is invalid: {item.error}")
-
-        self.stop_current()
-        self._wait_for_ports_to_release()
-        recording_path = self.outputs_dir / f"{item.path.stem}.rrd" if save_recording else None
-        cmd = [
-            sys.executable,
-            str(SERVE_SCRIPT),
-            "--config",
-            str(item.path),
-            "--web-port",
-            str(self.viewer_port),
-            "--grpc-port",
-            str(self.grpc_port),
-            "--keep-alive",
-        ]
-        if recording_path is not None:
-            cmd.extend(["--save-recording", str(recording_path)])
-
-        env = os.environ.copy()
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            cwd=str(REPO_ROOT),
-            env=env,
-        )
-
-        with self.lock:
-            self.process = process
-            self.current_item_id = item_id
-            self.current_recording = str(recording_path) if recording_path is not None else None
-            self.status = "starting"
-            self.started_at = utc_now()
-            self.last_error = None
-            self.log_lines.clear()
-
-        self._append_log(f"starting dashboard for '{item_id}' using {item.path.name}")
+        scene_suffix = f" (scene: {scene.label})" if scene is not None else ""
+        self._append_log(f"starting dashboard for '{item_id}' using {item.path.name}{scene_suffix}")
         if recording_path is None:
             self._append_log("live viewer mode enabled; not saving a .rrd recording")
         else:
@@ -404,9 +891,10 @@ class DashboardAppHandler(BaseHTTPRequestHandler):
             if not item_id:
                 self._send_json({"error": "item_id is required"}, status=400)
                 return
+            scene_id = str(payload.get("scene_id", "")).strip() or None
             save_recording = bool(payload.get("save_recording", False))
             try:
-                status = self.app_state.start_item(item_id, save_recording=save_recording)
+                status = self.app_state.start_item(item_id, scene_id=scene_id, save_recording=save_recording)
                 self._send_json(status)
             except Exception as exc:
                 self._send_json({"error": str(exc)}, status=400)

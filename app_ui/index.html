@@ -9,17 +9,17 @@
 <body>
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="brand-block">
-        <p class="eyebrow">Rerun Docker</p>
-        <h1>Control Center</h1>
-        <p class="brand-copy">Launch one dataset session at a time, watch the viewer, and inspect logs without leaving the browser.</p>
+      <div class="sidebar-brand">
+        <div class="brand-mark">R</div>
+        <div>
+          <p class="sidebar-kicker">Rerun Docker</p>
+          <h1>Purity Control</h1>
+        </div>
       </div>
 
-      <section class="sidebar-card">
-        <div class="sidebar-card-head">
-          <span class="sidebar-card-label">Launch Mode</span>
-          <span id="status-pill" class="status-pill" data-tone="idle">idle</span>
-        </div>
+      <section class="sidebar-card sidebar-status">
+        <p class="sidebar-card-label">Launch Mode</p>
+        <span id="status-pill" class="status-pill" data-tone="idle">idle</span>
         <label class="toggle-row">
           <input id="save-recording-toggle" type="checkbox">
           <span>Save `.rrd` on next launch</span>
@@ -31,9 +31,27 @@
         </div>
       </section>
 
+      <nav class="sidebar-card sidebar-nav">
+        <p class="sidebar-card-label">Workspace</p>
+        <a class="nav-link active" href="#preset-library">
+          <span class="nav-icon">1</span>
+          <span>Dataset Library</span>
+        </a>
+        <a class="nav-link" href="#viewer-panel">
+          <span class="nav-icon">2</span>
+          <span>Viewer</span>
+        </a>
+        <a class="nav-link" href="#logs-panel">
+          <span class="nav-icon">3</span>
+          <span>Logs</span>
+        </a>
+      </nav>
+
       <section class="sidebar-card compact">
         <p class="sidebar-card-label">Active Preset</p>
         <strong id="active-item" class="value-strong">none</strong>
+        <p class="sidebar-card-label">Active Scene</p>
+        <strong id="active-scene">default</strong>
         <p id="last-error" class="muted danger-copy hidden"></p>
       </section>
     </aside>
@@ -41,8 +59,9 @@
     <main class="main-shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">Session Operations</p>
-          <h2>Docker Viewer Dashboard</h2>
+          <p class="page-kicker">Dashboard</p>
+          <h2>Rerun viewer workspace</h2>
+          <p class="topbar-copy">Manage presets, launch a scene, and inspect the live viewer from one place.</p>
         </div>
         <div class="topbar-actions">
           <a id="viewer-link" class="btn btn-ghost" href="http://localhost:9090" target="_blank" rel="noreferrer">Open Viewer</a>
@@ -50,36 +69,51 @@
       </header>
 
       <section class="hero-grid">
-        <article class="metric-card accent">
-          <span class="metric-label">Session State</span>
-          <strong id="status-text" class="metric-value">idle</strong>
-          <p class="metric-copy">Current process lifecycle state from the dashboard server.</p>
+        <article class="metric-card metric-card-accent">
+          <div class="metric-icon">S</div>
+          <div>
+            <span class="metric-label">Session State</span>
+            <strong id="status-text" class="metric-value">idle</strong>
+            <p class="metric-copy">Current process lifecycle state from the dashboard server.</p>
+          </div>
         </article>
         <article class="metric-card">
-          <span class="metric-label">Viewer Endpoint</span>
-          <strong id="viewer-port" class="metric-value">9090</strong>
-          <p id="grpc-url" class="metric-copy">rerun+http://localhost:9876/proxy</p>
+          <div class="metric-icon">V</div>
+          <div>
+            <span class="metric-label">Viewer Endpoint</span>
+            <strong id="viewer-port" class="metric-value">9090</strong>
+            <p id="grpc-url" class="metric-copy">rerun+http://localhost:9876/proxy</p>
+          </div>
         </article>
         <article class="metric-card">
-          <span class="metric-label">Recording Output</span>
-          <strong id="recording-name" class="metric-value">none</strong>
-          <p id="recording-path" class="metric-copy">No `.rrd` file attached</p>
+          <div class="metric-icon">R</div>
+          <div>
+            <span class="metric-label">Recording Output</span>
+            <strong id="recording-name" class="metric-value">none</strong>
+            <p id="recording-path" class="metric-copy">No `.rrd` file attached</p>
+          </div>
         </article>
         <article class="metric-card">
-          <span class="metric-label">Started At</span>
-          <strong id="started-at" class="metric-value">not started</strong>
-          <p class="metric-copy">Launches update automatically while the app polls the backend.</p>
+          <div class="metric-icon">T</div>
+          <div>
+            <span class="metric-label">Started At</span>
+            <strong id="started-at" class="metric-value">not started</strong>
+            <p class="metric-copy">Launches update automatically while the app polls the backend.</p>
+          </div>
         </article>
       </section>
 
-      <section class="content-grid">
-        <section id="preset-library" class="panel panel-tall">
-          <div class="panel-header">
+      <section id="content-grid" class="content-grid">
+        <section id="preset-library" class="panel dashboard-panel" data-panel-id="library" data-layout-slot="slot-a">
+          <div class="panel-header panel-drag-handle" draggable="true">
             <div>
-              <p class="eyebrow">Dataset Library</p>
+              <p class="panel-kicker">Dataset Library</p>
               <h3>Ready-to-play presets</h3>
             </div>
-            <span id="preset-count" class="panel-meta">0 presets</span>
+            <div class="panel-head-actions">
+              <span id="preset-count" class="panel-meta">0 presets</span>
+              <span class="drag-pill">Drag</span>
+            </div>
           </div>
           <div class="toolbar-row">
             <label class="search-field">
@@ -93,33 +127,56 @@
               </select>
             </label>
           </div>
+          <div id="scene-selector" class="scene-selector hidden">
+            <div class="scene-selector-head">
+              <div>
+                <p class="panel-kicker">Scene</p>
+                <h3>Scene selection</h3>
+              </div>
+              <span id="scene-count" class="panel-meta"></span>
+            </div>
+            <label class="select-field">
+              <span class="sr-only">Choose scene</span>
+              <select id="scene-select"></select>
+            </label>
+            <p id="scene-description" class="preset-desc"></p>
+          </div>
           <div id="items" class="card-list"></div>
         </section>
 
-        <section id="viewer-panel" class="panel panel-wide">
-          <div class="panel-header">
+        <section id="viewer-panel" class="panel dashboard-panel" data-panel-id="viewer" data-layout-slot="slot-b">
+          <div class="panel-header panel-drag-handle" draggable="true">
             <div>
-              <p class="eyebrow">Viewer</p>
+              <p class="panel-kicker">Viewer</p>
               <h3>Embedded Rerun session</h3>
             </div>
-            <span class="panel-meta">The viewer continues to run on its own port.</span>
+            <div class="panel-head-actions">
+              <span class="panel-meta">The viewer continues to run on its own port.</span>
+              <span class="drag-pill">Drag</span>
+            </div>
           </div>
           <iframe id="viewer-frame" src="http://localhost:9090" title="Rerun Viewer"></iframe>
         </section>
 
-        <section class="panel panel-wide">
-          <div class="panel-header">
+        <section id="logs-panel" class="panel dashboard-panel" data-panel-id="logs" data-layout-slot="slot-c">
+          <div class="panel-header panel-drag-handle" draggable="true">
             <div>
-              <p class="eyebrow">Logs</p>
+              <p class="panel-kicker">Logs</p>
               <h3>Session console</h3>
             </div>
-            <label class="search-field search-field-small">
-              <span class="sr-only">Search logs</span>
-              <input id="log-search" type="search" placeholder="Search logs">
-            </label>
+            <div class="panel-head-actions">
+              <label class="search-field search-field-small">
+                <span class="sr-only">Search logs</span>
+                <input id="log-search" type="search" placeholder="Search logs">
+              </label>
+              <span class="drag-pill">Drag</span>
+            </div>
           </div>
           <div id="logs" class="log-list empty-state">No logs yet.</div>
         </section>
+
+        <div id="column-resizer" class="grid-resizer grid-resizer-col" title="Resize library and right column"></div>
+        <div id="row-resizer" class="grid-resizer grid-resizer-row" title="Resize viewer and logs"></div>
       </section>
     </main>
   </div>

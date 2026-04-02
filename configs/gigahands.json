@@ -6,6 +6,7 @@
     "cam_name": "brics-odroid-010_cam0",
     "frame_id": "1727030430697198"
   },
+  "scenes": "auto",
   "view": {
     "mode": "both",
     "spawn": true

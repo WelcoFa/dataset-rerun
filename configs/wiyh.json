@@ -1,6 +1,7 @@
 {
   "dataset": "wiyh",
   "input": "/data/wyih",
+  "scenes": "auto",
   "view": {
     "mode": "both",
     "spawn": true

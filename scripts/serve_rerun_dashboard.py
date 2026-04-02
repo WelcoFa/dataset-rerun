@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import signal
 import sys
 import time
@@ -55,6 +56,13 @@ def parse_web_args() -> argparse.Namespace:
         default=None,
         help="Optional .rrd output path to save alongside the live web session.",
     )
+    parser.add_argument("--selection-json", type=str, default=None, help="Optional JSON object overriding config selection.")
+    parser.add_argument(
+        "--dataset-options-json",
+        type=str,
+        default=None,
+        help="Optional JSON object overriding config dataset_options.",
+    )
     return parser.parse_args()
 
 
@@ -71,6 +79,16 @@ def main() -> None:
         )
     )
     config.spawn = False
+    if args.selection_json is not None:
+        selection_override = json.loads(args.selection_json)
+        if not isinstance(selection_override, dict):
+            raise ValueError("--selection-json must decode to a JSON object")
+        config.selection.update(selection_override)
+    if args.dataset_options_json is not None:
+        dataset_options_override = json.loads(args.dataset_options_json)
+        if not isinstance(dataset_options_override, dict):
+            raise ValueError("--dataset-options-json must decode to a JSON object")
+        config.dataset_options.update(dataset_options_override)
 
     adapter = resolve_adapter(config)
     adapter.load()

@@ -1,6 +1,7 @@
 {
   "dataset": "thermohands",
   "input": "/data/thermohands",
+  "scenes": "auto",
   "view": {
     "mode": "both",
     "spawn": true

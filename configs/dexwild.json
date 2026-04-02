@@ -1,6 +1,7 @@
 {
   "dataset": "dexwild",
   "input": "/data/dexwild",
+  "scenes": "auto",
   "view": {
     "mode": "both",
     "spawn": true
