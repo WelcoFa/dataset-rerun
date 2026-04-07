@@ -1,4 +1,5 @@
 const state = {
+  route: "library",
   items: [],
   selectedItemId: null,
   selectedSceneId: null,
@@ -17,20 +18,19 @@ const state = {
   datasetFilter: "all",
   logSearch: "",
   launchPending: false,
-  layout: {
-    slots: {
-      library: "slot-a",
-      viewer: "slot-b",
-      logs: "slot-c",
-    },
-    leftWidth: 420,
-    topHeight: 620,
-  },
-  dragPanelId: null,
 };
 
 const els = {};
-const LAYOUT_STORAGE_KEY = "rerun-dashboard-layout-v1";
+const ROUTES = {
+  library: {
+    title: "Library",
+    description: "Choose a dataset preset, pick a scene, launch a run, and monitor session details.",
+  },
+  viewer: {
+    title: "Viewer",
+    description: "Inspect the live viewer and the full console together on one page.",
+  },
+};
 
 function $(id) {
   return document.getElementById(id);
@@ -79,8 +79,21 @@ function toneForStatus(status) {
   return "idle";
 }
 
-function isDesktopLayout() {
-  return window.matchMedia("(min-width: 1181px)").matches;
+function getRouteFromHash() {
+  const raw = window.location.hash.replace(/^#\/?/, "").trim().toLowerCase();
+  return ROUTES[raw] ? raw : "library";
+}
+
+function setRoute(route, replace = false) {
+  const target = ROUTES[route] ? route : "library";
+  const hash = `#/${target}`;
+  if (replace) {
+    history.replaceState(null, "", hash);
+  } else {
+    window.location.hash = hash;
+  }
+  state.route = target;
+  renderRoute();
 }
 
 async function fetchJson(url, options = {}) {
@@ -116,6 +129,11 @@ function getSelectedItem() {
   return state.items.find((item) => item.id === state.selectedItemId) || null;
 }
 
+function getSelectedScene(item = getSelectedItem()) {
+  const scenes = Array.isArray(item?.scenes) ? item.scenes : [];
+  return scenes.find((scene) => scene.id === state.selectedSceneId) || null;
+}
+
 function chooseSceneId(item, preferredSceneId = null) {
   const scenes = Array.isArray(item?.scenes) ? item.scenes : [];
   if (scenes.length === 0) {
@@ -137,6 +155,21 @@ function setSelectedItem(itemId, preferredSceneId = null) {
   state.selectedItemId = itemId;
   const item = getSelectedItem();
   state.selectedSceneId = item ? chooseSceneId(item, preferredSceneId) : null;
+  renderLibrarySummary();
+}
+
+function renderRoute() {
+  const route = ROUTES[state.route] ? state.route : "library";
+  els.routeTitle.textContent = ROUTES[route].title;
+  els.routeDescription.textContent = ROUTES[route].description;
+
+  Object.entries(els.pages).forEach(([pageRoute, element]) => {
+    element.classList.toggle("hidden", pageRoute !== route);
+  });
+
+  els.routeLinks.forEach((link) => {
+    link.classList.toggle("active", link.dataset.routeLink === route);
+  });
 }
 
 function renderDatasetFilter() {
@@ -197,6 +230,7 @@ function renderItems() {
       setSelectedItem(item.id);
       renderItems();
       renderSceneSelector();
+      renderLibrarySummary();
     });
     els.items.appendChild(button);
   });
@@ -223,9 +257,19 @@ function renderSceneSelector() {
     els.sceneSelect.appendChild(option);
   });
   els.sceneSelect.value = state.selectedSceneId || scenes[0].id;
-  const activeScene = scenes.find((scene) => scene.id === els.sceneSelect.value) || scenes[0];
+  const activeScene = getSelectedScene(item) || scenes[0];
   els.sceneDescription.textContent = activeScene.description || "Choose which scene to launch for this dataset preset.";
   els.sceneCount.textContent = `${scenes.length} scenes`;
+}
+
+function renderLibrarySummary() {
+  const item = getSelectedItem();
+  const scene = getSelectedScene(item);
+  els.selectedItemName.textContent = item?.label || "none";
+  els.selectedItemDataset.textContent = item?.dataset || "none";
+  els.selectedItemInput.textContent = item?.input || "none";
+  els.selectedSceneName.textContent = scene?.label || item?.default_scene_id || "default";
+  els.selectedSceneSummary.textContent = scene?.description || item?.description || "Pick a preset to see what will be launched.";
 }
 
 function renderLogs() {
@@ -285,6 +329,16 @@ function renderStatus() {
     els.viewerFrame.dataset.currentSessionKey = viewerSessionKey;
   }
 
+  els.sessionItem.textContent = state.activeItem || "none";
+  els.sessionScene.textContent = state.activeSceneId || "default";
+  els.sessionViewerUrl.textContent = state.viewerUrl;
+  els.sessionRecordingPath.textContent = state.recordingPath && state.recordingPath !== "none" ? state.recordingPath : "none";
+
+  els.viewerSessionItem.textContent = state.activeItem || "none";
+  els.viewerSessionScene.textContent = state.activeSceneId || "default";
+  els.viewerSessionStatus.textContent = state.status;
+  els.viewerSessionUrl.textContent = state.viewerUrl;
+
   if (state.lastError) {
     els.lastError.textContent = state.lastError;
     els.lastError.classList.remove("hidden");
@@ -294,191 +348,22 @@ function renderStatus() {
   }
 }
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function saveLayout() {
-  try {
-    window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(state.layout));
-  } catch (_) {}
-}
-
-function loadLayout() {
-  try {
-    const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
-    if (!raw) {
-      return;
-    }
-    const parsed = JSON.parse(raw);
-    if (parsed && parsed.slots && parsed.leftWidth && parsed.topHeight) {
-      state.layout = {
-        slots: {
-          library: parsed.slots.library || "slot-a",
-          viewer: parsed.slots.viewer || "slot-b",
-          logs: parsed.slots.logs || "slot-c",
-        },
-        leftWidth: Number(parsed.leftWidth) || 420,
-        topHeight: Number(parsed.topHeight) || 620,
-      };
-    }
-  } catch (_) {}
-}
-
-function applyLayout() {
-  if (!isDesktopLayout()) {
-    els.contentGrid.dataset.layoutReady = "false";
-    els.contentGrid.style.gridTemplateColumns = "";
-    els.contentGrid.style.gridTemplateRows = "";
-    els.columnResizer.style.left = "";
-    els.rowResizer.style.left = "";
-    els.rowResizer.style.right = "";
-    els.rowResizer.style.top = "";
-    return;
-  }
-
-  const gridWidth = els.contentGrid.clientWidth;
-  const gridHeight = Math.max(els.contentGrid.clientHeight, 720);
-  const gap = 18;
-  const leftWidth = clamp(state.layout.leftWidth, 320, Math.max(360, gridWidth - 360));
-  const topHeight = clamp(state.layout.topHeight, 260, Math.max(320, gridHeight - 220));
-  state.layout.leftWidth = leftWidth;
-  state.layout.topHeight = topHeight;
-
-  els.contentGrid.dataset.layoutReady = "true";
-  els.contentGrid.style.gridTemplateColumns = `${leftWidth}px minmax(0, 1fr)`;
-  els.contentGrid.style.gridTemplateRows = `${topHeight}px minmax(220px, 1fr)`;
-
-  Object.entries(state.layout.slots).forEach(([panelId, slot]) => {
-    const panel = document.querySelector(`[data-panel-id="${panelId}"]`);
-    if (panel) {
-      panel.style.setProperty("--panel-slot", slot);
-    }
-  });
-
-  els.columnResizer.style.left = `${leftWidth + gap / 2}px`;
-  els.rowResizer.style.left = `${leftWidth + gap}px`;
-  els.rowResizer.style.right = "0";
-  els.rowResizer.style.top = `${topHeight + gap / 2}px`;
-}
-
-function swapPanelSlots(sourcePanelId, targetPanelId) {
-  const nextSlots = { ...state.layout.slots };
-  const sourceSlot = nextSlots[sourcePanelId];
-  const targetSlot = nextSlots[targetPanelId];
-  if (!sourceSlot || !targetSlot || sourceSlot === targetSlot) {
-    return;
-  }
-  nextSlots[sourcePanelId] = targetSlot;
-  nextSlots[targetPanelId] = sourceSlot;
-  state.layout.slots = nextSlots;
-  saveLayout();
-  applyLayout();
-}
-
-function bindLayoutInteractions() {
-  const panels = [...document.querySelectorAll(".dashboard-panel")];
-  panels.forEach((panel) => {
-    const handle = panel.querySelector(".panel-drag-handle");
-    const panelId = panel.dataset.panelId;
-    if (!handle || !panelId) {
-      return;
-    }
-
-    handle.addEventListener("dragstart", (event) => {
-      if (!isDesktopLayout()) {
-        event.preventDefault();
-        return;
-      }
-      state.dragPanelId = panelId;
-      event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("text/plain", panelId);
-    });
-
-    handle.addEventListener("dragend", () => {
-      state.dragPanelId = null;
-      panels.forEach((item) => item.classList.remove("drop-target"));
-    });
-
-    panel.addEventListener("dragover", (event) => {
-      if (!isDesktopLayout() || !state.dragPanelId || state.dragPanelId === panelId) {
-        return;
-      }
-      event.preventDefault();
-      panel.classList.add("drop-target");
-    });
-
-    panel.addEventListener("dragleave", () => {
-      panel.classList.remove("drop-target");
-    });
-
-    panel.addEventListener("drop", (event) => {
-      if (!isDesktopLayout()) {
-        return;
-      }
-      event.preventDefault();
-      panel.classList.remove("drop-target");
-      const sourcePanelId = state.dragPanelId || event.dataTransfer.getData("text/plain");
-      if (!sourcePanelId || sourcePanelId === panelId) {
-        return;
-      }
-      swapPanelSlots(sourcePanelId, panelId);
-    });
-  });
-
-  const startColumnResize = (event) => {
-    if (!isDesktopLayout()) {
-      return;
-    }
-    event.preventDefault();
-    els.columnResizer.classList.add("active");
-    const onMove = (moveEvent) => {
-      const bounds = els.contentGrid.getBoundingClientRect();
-      state.layout.leftWidth = clamp(moveEvent.clientX - bounds.left, 320, bounds.width - 360);
-      applyLayout();
-    };
-    const onUp = () => {
-      els.columnResizer.classList.remove("active");
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      saveLayout();
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  };
-
-  const startRowResize = (event) => {
-    if (!isDesktopLayout()) {
-      return;
-    }
-    event.preventDefault();
-    els.rowResizer.classList.add("active");
-    const onMove = (moveEvent) => {
-      const bounds = els.contentGrid.getBoundingClientRect();
-      state.layout.topHeight = clamp(moveEvent.clientY - bounds.top, 260, bounds.height - 220);
-      applyLayout();
-    };
-    const onUp = () => {
-      els.rowResizer.classList.remove("active");
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      saveLayout();
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  };
-
-  els.columnResizer.addEventListener("pointerdown", startColumnResize);
-  els.rowResizer.addEventListener("pointerdown", startRowResize);
-  window.addEventListener("resize", () => applyLayout());
-}
-
 function appendLog(message) {
   state.logs.push(message);
   if (state.logs.length > 200) {
     state.logs = state.logs.slice(-200);
   }
   renderLogs();
+}
+
+function renderAll() {
+  renderDatasetFilter();
+  renderItems();
+  renderSceneSelector();
+  renderLibrarySummary();
+  renderStatus();
+  renderLogs();
+  renderRoute();
 }
 
 async function refreshAll() {
@@ -508,18 +393,14 @@ async function refreshAll() {
     state.selectedSceneId = selected ? chooseSceneId(selected, state.selectedSceneId) : null;
   }
 
-  renderDatasetFilter();
-  renderItems();
-  renderSceneSelector();
-  renderStatus();
-  renderLogs();
+  renderAll();
 }
 
 async function openSelected() {
   if (state.launchPending) {
     return;
   }
-  const selected = state.items.find((item) => item.id === state.selectedItemId);
+  const selected = getSelectedItem();
   if (!selected) {
     appendLog("No preset selected.");
     return;
@@ -547,6 +428,7 @@ async function openSelected() {
         : `Started preset ${selected.label}${selectedScene ? ` (${selectedScene.label})` : ""} in live viewer mode`,
     );
     await refreshAll();
+    setRoute("viewer");
   } catch (error) {
     appendLog(`Start failed: ${error.message}`);
   } finally {
@@ -565,6 +447,7 @@ async function stopCurrent() {
     await fetchJson("/api/stop", { method: "POST" });
     appendLog("Stopped current session.");
     await refreshAll();
+    setRoute("library");
   } catch (error) {
     appendLog(`Stop failed: ${error.message}`);
   } finally {
@@ -574,6 +457,18 @@ async function stopCurrent() {
 }
 
 function bindEvents() {
+  window.addEventListener("hashchange", () => {
+    state.route = getRouteFromHash();
+    renderRoute();
+  });
+
+  els.routeLinks.forEach((link) => {
+    link.addEventListener("click", () => {
+      state.route = link.dataset.routeLink || "library";
+      renderRoute();
+    });
+  });
+
   els.launchBtn.addEventListener("click", () => {
     openSelected().catch((error) => appendLog(`Launch failed: ${error.message}`));
   });
@@ -606,15 +501,23 @@ function bindEvents() {
   els.sceneSelect.addEventListener("change", (event) => {
     state.selectedSceneId = event.target.value || null;
     renderSceneSelector();
+    renderLibrarySummary();
   });
   els.logSearch.addEventListener("input", (event) => {
     state.logSearch = event.target.value;
     renderLogs();
   });
-
 }
 
 function init() {
+  els.routeTitle = $("route-title");
+  els.routeDescription = $("route-description");
+  els.routeLinks = [...document.querySelectorAll("[data-route-link]")];
+  els.pages = {
+    library: $("page-library"),
+    viewer: $("page-viewer"),
+  };
+
   els.statusText = $("status-text");
   els.statusPill = $("status-pill");
   els.activeItem = $("active-item");
@@ -641,17 +544,29 @@ function init() {
   els.sceneSelect = $("scene-select");
   els.sceneDescription = $("scene-description");
   els.sceneCount = $("scene-count");
-  els.contentGrid = $("content-grid");
-  els.columnResizer = $("column-resizer");
-  els.rowResizer = $("row-resizer");
 
-  loadLayout();
+  els.selectedItemName = $("selected-item-name");
+  els.selectedItemDataset = $("selected-item-dataset");
+  els.selectedItemInput = $("selected-item-input");
+  els.selectedSceneName = $("selected-scene-name");
+  els.selectedSceneSummary = $("selected-scene-summary");
+
+  els.sessionItem = $("session-item");
+  els.sessionScene = $("session-scene");
+  els.sessionViewerUrl = $("session-viewer-url");
+  els.sessionRecordingPath = $("session-recording-path");
+  els.viewerSessionItem = $("viewer-session-item");
+  els.viewerSessionScene = $("viewer-session-scene");
+  els.viewerSessionStatus = $("viewer-session-status");
+  els.viewerSessionUrl = $("viewer-session-url");
+
+  state.route = getRouteFromHash();
+  if (!window.location.hash) {
+    setRoute("library", true);
+  }
+
   bindEvents();
-  bindLayoutInteractions();
-  applyLayout();
-  renderSceneSelector();
-  renderStatus();
-  renderLogs();
+  renderAll();
   refreshAll().catch((error) => appendLog(`Initial load failed: ${error.message}`));
   setInterval(() => {
     refreshAll().catch(() => {});

@@ -13,170 +13,265 @@
         <div class="brand-mark">R</div>
         <div>
           <p class="sidebar-kicker">Rerun Docker</p>
-          <h1>Purity Control</h1>
+          <h1>Control Center</h1>
         </div>
       </div>
 
-      <section class="sidebar-card sidebar-status">
-        <p class="sidebar-card-label">Launch Mode</p>
+      <section class="sidebar-card">
+        <p class="sidebar-card-label">Current Status</p>
         <span id="status-pill" class="status-pill" data-tone="idle">idle</span>
-        <label class="toggle-row">
-          <input id="save-recording-toggle" type="checkbox">
-          <span>Save `.rrd` on next launch</span>
-        </label>
-        <div class="action-stack">
-          <button id="launch-btn" class="btn btn-primary" type="button">Launch Selected</button>
-          <button id="stop-btn" class="btn btn-secondary" type="button">Stop Current</button>
-          <button id="refresh-btn" class="btn btn-ghost" type="button">Refresh Data</button>
+        <div class="status-list">
+          <div class="status-row">
+            <span>Preset</span>
+            <strong id="active-item">none</strong>
+          </div>
+          <div class="status-row">
+            <span>Scene</span>
+            <strong id="active-scene">default</strong>
+          </div>
         </div>
+        <p id="last-error" class="muted danger-copy hidden"></p>
       </section>
 
       <nav class="sidebar-card sidebar-nav">
-        <p class="sidebar-card-label">Workspace</p>
-        <a class="nav-link active" href="#preset-library">
+        <p class="sidebar-card-label">Pages</p>
+        <a class="nav-link" href="#/library" data-route-link="library">
           <span class="nav-icon">1</span>
-          <span>Dataset Library</span>
+          <span>Library</span>
         </a>
-        <a class="nav-link" href="#viewer-panel">
+        <a class="nav-link" href="#/viewer" data-route-link="viewer">
           <span class="nav-icon">2</span>
           <span>Viewer</span>
-        </a>
-        <a class="nav-link" href="#logs-panel">
-          <span class="nav-icon">3</span>
-          <span>Logs</span>
         </a>
       </nav>
 
       <section class="sidebar-card compact">
-        <p class="sidebar-card-label">Active Preset</p>
-        <strong id="active-item" class="value-strong">none</strong>
-        <p class="sidebar-card-label">Active Scene</p>
-        <strong id="active-scene">default</strong>
-        <p id="last-error" class="muted danger-copy hidden"></p>
+        <p class="sidebar-card-label">Workflow</p>
+        <p class="muted">Choose and launch in Library, then inspect and debug in Viewer.</p>
       </section>
     </aside>
 
     <main class="main-shell">
       <header class="topbar">
         <div>
-          <p class="page-kicker">Dashboard</p>
-          <h2>Rerun viewer workspace</h2>
-          <p class="topbar-copy">Manage presets, launch a scene, and inspect the live viewer from one place.</p>
+          <p class="page-kicker">Workspace</p>
+          <h2 id="route-title">Library</h2>
+          <p id="route-description" class="topbar-copy">Choose a dataset preset, pick a scene, launch a run, and monitor session details.</p>
         </div>
         <div class="topbar-actions">
           <a id="viewer-link" class="btn btn-ghost" href="http://localhost:9090" target="_blank" rel="noreferrer">Open Viewer</a>
         </div>
       </header>
 
-      <section class="hero-grid">
-        <article class="metric-card metric-card-accent">
-          <div class="metric-icon">S</div>
-          <div>
-            <span class="metric-label">Session State</span>
-            <strong id="status-text" class="metric-value">idle</strong>
-            <p class="metric-copy">Current process lifecycle state from the dashboard server.</p>
-          </div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-icon">V</div>
-          <div>
-            <span class="metric-label">Viewer Endpoint</span>
-            <strong id="viewer-port" class="metric-value">9090</strong>
-            <p id="grpc-url" class="metric-copy">rerun+http://localhost:9876/proxy</p>
-          </div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-icon">R</div>
-          <div>
-            <span class="metric-label">Recording Output</span>
-            <strong id="recording-name" class="metric-value">none</strong>
-            <p id="recording-path" class="metric-copy">No `.rrd` file attached</p>
-          </div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-icon">T</div>
-          <div>
-            <span class="metric-label">Started At</span>
-            <strong id="started-at" class="metric-value">not started</strong>
-            <p class="metric-copy">Launches update automatically while the app polls the backend.</p>
-          </div>
-        </article>
+      <section id="page-library" class="route-page">
+        <section class="hero-grid">
+          <article class="metric-card metric-card-accent">
+            <div class="metric-icon">S</div>
+            <div>
+              <span class="metric-label">Session State</span>
+              <strong id="status-text" class="metric-value">idle</strong>
+              <p class="metric-copy">Current process lifecycle state from the dashboard server.</p>
+            </div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-icon">V</div>
+            <div>
+              <span class="metric-label">Viewer Endpoint</span>
+              <strong id="viewer-port" class="metric-value">9090</strong>
+              <p id="grpc-url" class="metric-copy">rerun+http://localhost:9876/proxy</p>
+            </div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-icon">R</div>
+            <div>
+              <span class="metric-label">Recording Output</span>
+              <strong id="recording-name" class="metric-value">none</strong>
+              <p id="recording-path" class="metric-copy">No `.rrd` file attached</p>
+            </div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-icon">T</div>
+            <div>
+              <span class="metric-label">Started At</span>
+              <strong id="started-at" class="metric-value">not started</strong>
+              <p class="metric-copy">Launches update automatically while the app polls the backend.</p>
+            </div>
+          </article>
+        </section>
+
+        <div class="page-grid page-grid-library">
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="panel-kicker">Library</p>
+                <h3>Choose what to run</h3>
+              </div>
+              <span id="preset-count" class="panel-meta">0 presets</span>
+            </div>
+
+            <div class="toolbar-row">
+              <label class="search-field">
+                <span class="sr-only">Search presets</span>
+                <input id="preset-search" type="search" placeholder="Search dataset, config, input path">
+              </label>
+              <label class="select-field">
+                <span class="sr-only">Filter presets</span>
+                <select id="dataset-filter">
+                  <option value="all">All datasets</option>
+                </select>
+              </label>
+            </div>
+
+            <div id="scene-selector" class="scene-selector hidden">
+              <div class="scene-selector-head">
+                <div>
+                  <p class="panel-kicker">Scene</p>
+                  <h3>Scene selection</h3>
+                </div>
+                <span id="scene-count" class="panel-meta"></span>
+              </div>
+              <label class="select-field">
+                <span class="sr-only">Choose scene</span>
+                <select id="scene-select"></select>
+              </label>
+              <p id="scene-description" class="preset-desc"></p>
+            </div>
+
+            <div id="items" class="card-list"></div>
+          </section>
+
+          <aside class="stack-column">
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="panel-kicker">Launch Plan</p>
+                  <h3>Run summary</h3>
+                </div>
+              </div>
+              <div class="detail-grid">
+                <div class="detail-row">
+                  <span>Selected preset</span>
+                  <strong id="selected-item-name">none</strong>
+                </div>
+                <div class="detail-row">
+                  <span>Dataset</span>
+                  <strong id="selected-item-dataset">none</strong>
+                </div>
+                <div class="detail-row">
+                  <span>Input</span>
+                  <code id="selected-item-input">none</code>
+                </div>
+                <div class="detail-row">
+                  <span>Scene</span>
+                  <strong id="selected-scene-name">default</strong>
+                </div>
+              </div>
+              <p id="selected-scene-summary" class="muted summary-copy">Pick a preset to see what will be launched.</p>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="panel-kicker">Actions</p>
+                  <h3>Launch controls</h3>
+                </div>
+              </div>
+              <label class="toggle-row">
+                <input id="save-recording-toggle" type="checkbox">
+                <span>Save `.rrd` on next launch</span>
+              </label>
+              <div class="action-stack">
+                <button id="launch-btn" class="btn btn-primary" type="button">Launch Selected</button>
+                <button id="stop-btn" class="btn btn-secondary" type="button">Stop Current</button>
+                <button id="refresh-btn" class="btn btn-ghost" type="button">Refresh Data</button>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="panel-kicker">Session</p>
+                  <h3>What is running now</h3>
+                </div>
+              </div>
+              <div class="detail-grid">
+                <div class="detail-row">
+                  <span>Preset</span>
+                  <strong id="session-item">none</strong>
+                </div>
+                <div class="detail-row">
+                  <span>Scene</span>
+                  <strong id="session-scene">default</strong>
+                </div>
+                <div class="detail-row">
+                  <span>Viewer</span>
+                  <code id="session-viewer-url">http://localhost:9090</code>
+                </div>
+                <div class="detail-row">
+                  <span>Recording file</span>
+                  <code id="session-recording-path">none</code>
+                </div>
+              </div>
+            </section>
+
+          </aside>
+        </div>
       </section>
 
-      <section id="content-grid" class="content-grid">
-        <section id="preset-library" class="panel dashboard-panel" data-panel-id="library" data-layout-slot="slot-a">
-          <div class="panel-header panel-drag-handle" draggable="true">
-            <div>
-              <p class="panel-kicker">Dataset Library</p>
-              <h3>Ready-to-play presets</h3>
-            </div>
-            <div class="panel-head-actions">
-              <span id="preset-count" class="panel-meta">0 presets</span>
-              <span class="drag-pill">Drag</span>
-            </div>
-          </div>
-          <div class="toolbar-row">
-            <label class="search-field">
-              <span class="sr-only">Search presets</span>
-              <input id="preset-search" type="search" placeholder="Search dataset, config, input path">
-            </label>
-            <label class="select-field">
-              <span class="sr-only">Filter presets</span>
-              <select id="dataset-filter">
-                <option value="all">All datasets</option>
-              </select>
-            </label>
-          </div>
-          <div id="scene-selector" class="scene-selector hidden">
-            <div class="scene-selector-head">
+      <section id="page-viewer" class="route-page hidden">
+        <div class="page-grid page-grid-viewer">
+          <section class="panel panel-fill">
+            <div class="panel-header">
               <div>
-                <p class="panel-kicker">Scene</p>
-                <h3>Scene selection</h3>
+                <p class="panel-kicker">Viewer</p>
+                <h3>Embedded Rerun session</h3>
               </div>
-              <span id="scene-count" class="panel-meta"></span>
+              <span class="panel-meta">Use this page when you want visualization and debugging side by side.</span>
             </div>
-            <label class="select-field">
-              <span class="sr-only">Choose scene</span>
-              <select id="scene-select"></select>
-            </label>
-            <p id="scene-description" class="preset-desc"></p>
-          </div>
-          <div id="items" class="card-list"></div>
-        </section>
+            <iframe id="viewer-frame" src="http://localhost:9090" title="Rerun Viewer"></iframe>
+          </section>
 
-        <section id="viewer-panel" class="panel dashboard-panel" data-panel-id="viewer" data-layout-slot="slot-b">
-          <div class="panel-header panel-drag-handle" draggable="true">
-            <div>
-              <p class="panel-kicker">Viewer</p>
-              <h3>Embedded Rerun session</h3>
-            </div>
-            <div class="panel-head-actions">
-              <span class="panel-meta">The viewer continues to run on its own port.</span>
-              <span class="drag-pill">Drag</span>
-            </div>
-          </div>
-          <iframe id="viewer-frame" src="http://localhost:9090" title="Rerun Viewer"></iframe>
-        </section>
-
-        <section id="logs-panel" class="panel dashboard-panel" data-panel-id="logs" data-layout-slot="slot-c">
-          <div class="panel-header panel-drag-handle" draggable="true">
-            <div>
-              <p class="panel-kicker">Logs</p>
-              <h3>Session console</h3>
-            </div>
-            <div class="panel-head-actions">
-              <label class="search-field search-field-small">
-                <span class="sr-only">Search logs</span>
-                <input id="log-search" type="search" placeholder="Search logs">
-              </label>
-              <span class="drag-pill">Drag</span>
-            </div>
-          </div>
-          <div id="logs" class="log-list empty-state">No logs yet.</div>
-        </section>
-
-        <div id="column-resizer" class="grid-resizer grid-resizer-col" title="Resize library and right column"></div>
-        <div id="row-resizer" class="grid-resizer grid-resizer-row" title="Resize viewer and logs"></div>
+          <aside class="stack-column">
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="panel-kicker">Now Viewing</p>
+                  <h3>Session context</h3>
+                </div>
+              </div>
+              <div class="detail-grid">
+                <div class="detail-row">
+                  <span>Preset</span>
+                  <strong id="viewer-session-item">none</strong>
+                </div>
+                <div class="detail-row">
+                  <span>Scene</span>
+                  <strong id="viewer-session-scene">default</strong>
+                </div>
+                <div class="detail-row">
+                  <span>Status</span>
+                  <strong id="viewer-session-status">idle</strong>
+                </div>
+                <div class="detail-row">
+                  <span>Endpoint</span>
+                  <code id="viewer-session-url">http://localhost:9090</code>
+                </div>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="panel-kicker">Logs</p>
+                  <h3>Session console</h3>
+                </div>
+                <label class="search-field search-field-small">
+                  <span class="sr-only">Search logs</span>
+                  <input id="log-search" type="search" placeholder="Search logs">
+                </label>
+              </div>
+              <div id="logs" class="log-list empty-state">No logs yet.</div>
+            </section>
+          </aside>
+        </div>
       </section>
     </main>
   </div>
