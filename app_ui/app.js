@@ -23,6 +23,10 @@ const state = {
 
 const els = {};
 const ROUTES = {
+  home: {
+    title: "Home",
+    description: "See what the dashboard can do before you start browsing datasets or opening the viewer.",
+  },
   library: {
     title: "Session Explorer",
     description: "Browse and launch recorded sessions, choose a scene, and inspect runtime state.",
@@ -205,7 +209,7 @@ function focusLibrarySelection() {
     return;
   }
 
-  const targetTop = scrollTarget.getBoundingClientRect().top + window.scrollY - 20;
+  const targetTop = scrollTarget.getBoundingClientRect().top + window.scrollY - 55;
   window.scrollTo({
     top: Math.max(0, targetTop),
     behavior: "smooth",
@@ -460,9 +464,35 @@ function renderStatus() {
   els.viewerSessionUrl.textContent = state.viewerUrl;
 
   els.totalSessions.textContent = String(totalSessions);
-  els.recordingDuration.textContent = formatDuration(state.startedAt);
   els.totalScenes.textContent = String(totalScenes);
+  els.activeSessionSummary.textContent =
+    state.status === "running"
+      ? "Running"
+      : state.status === "starting"
+        ? "Starting"
+        : state.status === "failed"
+          ? "Failed"
+          : "Idle";
   els.validatedCount.textContent = `${validSessions}/${totalSessions}`;
+  els.datasetsReadyCopy.textContent =
+    totalSessions === 1 ? "1 config available to launch" : `${totalSessions} configs available to launch`;
+  els.scenesAvailableCopy.textContent =
+    totalScenes === 1 ? "1 scene across all datasets" : `${totalScenes} scenes across all datasets`;
+  if (state.status === "running" || state.status === "starting") {
+    const sessionParts = [state.activeItem || "unknown preset", state.activeSceneId || "default"];
+    els.activeSessionCopy.textContent =
+      state.status === "starting"
+        ? `${sessionParts.join(" • ")} is preparing in the viewer`
+        : `${sessionParts.join(" • ")} is live in the viewer`;
+  } else if (state.status === "failed") {
+    els.activeSessionCopy.textContent = state.lastError || "The last launch failed. Check the logs for details.";
+  } else {
+    els.activeSessionCopy.textContent = "No session is running right now";
+  }
+  els.validatedCopy.textContent =
+    validSessions === totalSessions
+      ? "All configs are launchable"
+      : `${totalSessions - validSessions} config${totalSessions - validSessions === 1 ? "" : "s"} need attention`;
 
   if (state.lastError) {
     els.lastError.textContent = state.lastError;
@@ -704,6 +734,7 @@ function init() {
   els.routeDescription = $("route-description");
   els.routeLinks = [...document.querySelectorAll("[data-route-link]")];
   els.pages = {
+    home: $("page-home"),
     library: $("page-library"),
     viewer: $("page-viewer"),
   };
@@ -720,9 +751,13 @@ function init() {
   els.recordingPath = $("recording-path");
   els.startedAt = $("started-at");
   els.totalSessions = $("total-sessions");
-  els.recordingDuration = $("recording-duration");
   els.totalScenes = $("total-scenes");
+  els.activeSessionSummary = $("active-session-summary");
   els.validatedCount = $("validated-count");
+  els.datasetsReadyCopy = $("datasets-ready-copy");
+  els.scenesAvailableCopy = $("scenes-available-copy");
+  els.activeSessionCopy = $("active-session-copy");
+  els.validatedCopy = $("validated-copy");
   els.refreshBtn = $("refresh-btn");
   els.stopBtn = $("stop-btn");
   els.launchBtn = $("launch-btn");

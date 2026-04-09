@@ -8,50 +8,47 @@
 </head>
 <body>
   <div class="app-shell">
-    <aside class="sidebar">
-      <div class="sidebar-brand">
-        <div class="brand-mark">R</div>
-        <div>
-          <p class="sidebar-kicker">Rerun Docker</p>
-          <h1>Control Center</h1>
-        </div>
-      </div>
-
-      <section class="sidebar-card">
-        <p class="sidebar-card-label">Current Status</p>
-        <span id="status-pill" class="status-pill" data-tone="idle">idle</span>
-        <div class="status-list">
-          <div class="status-row">
-            <span>Preset</span>
-            <strong id="active-item">none</strong>
-          </div>
-          <div class="status-row">
-            <span>Scene</span>
-            <strong id="active-scene">default</strong>
-          </div>
-        </div>
-        <p id="last-error" class="muted danger-copy hidden"></p>
-      </section>
-
-      <nav class="sidebar-card sidebar-nav">
-        <p class="sidebar-card-label">Pages</p>
-        <a class="nav-link" href="#/library" data-route-link="library">
-          <span class="nav-icon">1</span>
-          <span>Library</span>
-        </a>
-        <a class="nav-link" href="#/viewer" data-route-link="viewer">
-          <span class="nav-icon">2</span>
-          <span>Viewer</span>
-        </a>
-      </nav>
-
-      <section class="sidebar-card compact">
-        <p class="sidebar-card-label">Workflow</p>
-        <p class="muted">Choose and launch in Library, then inspect and debug in Viewer.</p>
-      </section>
-    </aside>
-
     <main class="main-shell">
+      <header class="dashboard-rail">
+        <div class="sidebar-brand top-brand">
+          <div class="brand-mark">R</div>
+          <div>
+            <p class="sidebar-kicker">Rerun Docker</p>
+            <h1>Control Center</h1>
+          </div>
+        </div>
+
+        <nav class="dashboard-nav" aria-label="Primary">
+          <a class="nav-link" href="#/home" data-route-link="home">
+            <span class="nav-icon">0</span>
+            <span>Home</span>
+          </a>
+          <a class="nav-link" href="#/library" data-route-link="library">
+            <span class="nav-icon">1</span>
+            <span>Library</span>
+          </a>
+          <a class="nav-link" href="#/viewer" data-route-link="viewer">
+            <span class="nav-icon">2</span>
+            <span>Viewer</span>
+          </a>
+        </nav>
+
+        <section class="rail-runtime">
+          <span id="status-pill" class="status-pill" data-tone="idle">idle</span>
+          <div class="rail-runtime-copy">
+            <div class="rail-runtime-line">
+              <span class="rail-runtime-label">Preset</span>
+              <strong id="active-item">none</strong>
+            </div>
+            <div class="rail-runtime-line">
+              <span class="rail-runtime-label">Scene</span>
+              <strong id="active-scene">default</strong>
+            </div>
+          </div>
+          <p id="last-error" class="muted danger-copy hidden"></p>
+        </section>
+      </header>
+
       <header class="topbar">
         <div>
           <p class="page-kicker">Workspace</p>
@@ -63,6 +60,87 @@
         </div>
       </header>
 
+      <section id="page-home" class="route-page hidden">
+        <section class="page-grid home-grid">
+          <section class="panel home-hero-panel">
+            <div class="panel-header">
+              <div>
+                <p class="panel-kicker">Home</p>
+                <h3>Welcome to Control Center</h3>
+              </div>
+            </div>
+            <p class="home-lead">This dashboard helps you browse datasets, choose scenes, launch Rerun sessions, inspect logs, and switch scenes without leaving the web UI.</p>
+            <div class="home-pill-row">
+              <span class="session-chip">Dataset Browser</span>
+              <span class="session-chip">Scene Selection</span>
+              <span class="session-chip">Embedded Viewer</span>
+              <span class="session-chip">Logs + Status</span>
+            </div>
+          </section>
+
+          <section class="home-step-grid">
+            <article class="panel home-step-card">
+              <div class="home-step-number">1</div>
+              <p class="panel-kicker">Start Here</p>
+              <h3>Browse datasets</h3>
+              <p class="muted">Open the Library page to see all available dataset presets, search by name, and review which configs are valid.</p>
+            </article>
+
+            <article class="panel home-step-card">
+              <div class="home-step-number">2</div>
+              <p class="panel-kicker">Choose Content</p>
+              <h3>Select a scene</h3>
+              <p class="muted">For datasets with multiple scenes, use the scene selector to pick the exact sequence you want to launch.</p>
+            </article>
+
+            <article class="panel home-step-card">
+              <div class="home-step-number">3</div>
+              <p class="panel-kicker">Run</p>
+              <h3>Launch a session</h3>
+              <p class="muted">Use Launch Selected to start a live Rerun session, or enable `.rrd` saving if you want to keep a recording.</p>
+            </article>
+
+            <article class="panel home-step-card">
+              <div class="home-step-number">4</div>
+              <p class="panel-kicker">Inspect</p>
+              <h3>Use the Viewer page</h3>
+              <p class="muted">Watch the embedded Rerun viewer, inspect session logs, go fullscreen, and switch the active scene while the dataset is running.</p>
+            </article>
+          </section>
+
+          <section class="panel home-feature-panel">
+            <div class="panel-header">
+              <div>
+                <p class="panel-kicker">What You Can Do</p>
+                <h3>Dashboard features</h3>
+              </div>
+            </div>
+            <div class="home-feature-list">
+              <div class="detail-row">
+                <span>Library search</span>
+                <strong>Find presets quickly</strong>
+              </div>
+              <div class="detail-row">
+                <span>Run summary</span>
+                <strong>Review dataset, input, and scene before launch</strong>
+              </div>
+              <div class="detail-row">
+                <span>Live status</span>
+                <strong>See whether the session is idle, starting, running, or failed</strong>
+              </div>
+              <div class="detail-row">
+                <span>Viewer controls</span>
+                <strong>Fullscreen the viewer and switch scenes from the Viewer page</strong>
+              </div>
+              <div class="detail-row">
+                <span>Logs</span>
+                <strong>Follow backend output and errors directly in the dashboard</strong>
+              </div>
+            </div>
+          </section>
+        </section>
+      </section>
+
       <section id="page-library" class="route-page">
         <section class="session-explorer-shell">
           <section class="hero-grid hero-grid-session">
@@ -70,28 +148,32 @@
               <div class="metric-card-icon metric-card-icon-blue">D</div>
               <div class="metric-stack">
                 <strong id="total-sessions" class="metric-value">0</strong>
-                <span class="metric-label">Total Sessions</span>
+                <span class="metric-label">Datasets Ready</span>
+                <p id="datasets-ready-copy" class="metric-copy">Configs available to launch</p>
               </div>
             </article>
             <article class="metric-card metric-card-purple">
-              <div class="metric-card-icon metric-card-icon-purple">C</div>
+              <div class="metric-card-icon metric-card-icon-purple">S</div>
               <div class="metric-stack">
-                <strong id="recording-duration" class="metric-value">0h 00m</strong>
-                <span class="metric-label">Recording Time</span>
+                <strong id="total-scenes" class="metric-value">0</strong>
+                <span class="metric-label">Scenes Available</span>
+                <p id="scenes-available-copy" class="metric-copy">Total scenes across all datasets</p>
               </div>
             </article>
             <article class="metric-card metric-card-teal">
-              <div class="metric-card-icon metric-card-icon-teal">S</div>
+              <div class="metric-card-icon metric-card-icon-teal">A</div>
               <div class="metric-stack">
-                <strong id="total-scenes" class="metric-value">0</strong>
-                <span class="metric-label">Total Scenes</span>
+                <strong id="active-session-summary" class="metric-value">Idle</strong>
+                <span class="metric-label">Active Session</span>
+                <p id="active-session-copy" class="metric-copy">No session is running right now</p>
               </div>
             </article>
             <article class="metric-card metric-card-amber">
               <div class="metric-card-icon metric-card-icon-amber">V</div>
               <div class="metric-stack">
                 <strong id="validated-count" class="metric-value">0/0</strong>
-                <span class="metric-label">Validated</span>
+                <span class="metric-label">Validation Health</span>
+                <p id="validated-copy" class="metric-copy">Checks launch readiness for each config</p>
               </div>
             </article>
           </section>
