@@ -27,6 +27,10 @@ services:
     volumes:
       - "${DATA_ROOT:-./data}:/data"
       - "${OUTPUT_ROOT:-./outputs}:/outputs"
+      - "./app_ui:/app/app_ui"
+      - "./scripts:/app/scripts"
+      - "./configs:/app/configs"
+      - "./rerun_viz:/app/rerun_viz"
     restart: unless-stopped
 
   multidataset-vlm:

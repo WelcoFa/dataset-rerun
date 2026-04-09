@@ -6,6 +6,7 @@ const state = {
   status: "idle",
   activeItem: null,
   activeSceneId: null,
+  viewerSceneId: null,
   viewerUrl: "http://localhost:9090",
   grpcUrl: "rerun+http://localhost:9876/proxy",
   recordingPath: "none",
@@ -23,8 +24,8 @@ const state = {
 const els = {};
 const ROUTES = {
   library: {
-    title: "Library",
-    description: "Choose a dataset preset, pick a scene, launch a run, and monitor session details.",
+    title: "Session Explorer",
+    description: "Browse and launch recorded sessions, choose a scene, and inspect runtime state.",
   },
   viewer: {
     title: "Viewer",
@@ -56,11 +57,38 @@ function formatDateTime(value) {
   return date.toLocaleString();
 }
 
+function formatDuration(value) {
+  if (!value) {
+    return "0h 00m";
+  }
+  const started = new Date(value);
+  if (Number.isNaN(started.getTime())) {
+    return "0h 00m";
+  }
+  const elapsedMs = Math.max(0, Date.now() - started.getTime());
+  const totalMinutes = Math.floor(elapsedMs / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+}
+
 function basename(path) {
   if (!path || path === "none") {
     return "none";
   }
   return String(path).split(/[\\/]/).pop() || path;
+}
+
+function titleCase(value) {
+  return String(value || "")
+    .replaceAll(/[-_]+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function trimSceneSuffix(value) {
+  return String(value || "")
+    .replace(/\s*\|\s*\d+\s+scenes?$/i, "")
+    .trim();
 }
 
 function toneForStatus(status) {
@@ -134,6 +162,15 @@ function getSelectedScene(item = getSelectedItem()) {
   return scenes.find((scene) => scene.id === state.selectedSceneId) || null;
 }
 
+function getActiveItem() {
+  return state.items.find((item) => item.id === state.activeItem) || null;
+}
+
+function getViewerScene(item = getActiveItem()) {
+  const scenes = Array.isArray(item?.scenes) ? item.scenes : [];
+  return scenes.find((scene) => scene.id === state.viewerSceneId) || null;
+}
+
 function chooseSceneId(item, preferredSceneId = null) {
   const scenes = Array.isArray(item?.scenes) ? item.scenes : [];
   if (scenes.length === 0) {
@@ -172,24 +209,10 @@ function renderRoute() {
   });
 }
 
-function renderDatasetFilter() {
-  const previous = state.datasetFilter;
-  const datasets = [...new Set(state.items.map((item) => item.dataset).filter(Boolean))].sort();
-  els.datasetFilter.innerHTML = '<option value="all">All datasets</option>';
-  datasets.forEach((dataset) => {
-    const option = document.createElement("option");
-    option.value = dataset;
-    option.textContent = dataset;
-    els.datasetFilter.appendChild(option);
-  });
-  els.datasetFilter.value = datasets.includes(previous) || previous === "all" ? previous : "all";
-  state.datasetFilter = els.datasetFilter.value;
-}
-
 function renderItems() {
   const visibleItems = getVisibleItems();
   els.items.innerHTML = "";
-  els.presetCount.textContent = `${visibleItems.length} preset${visibleItems.length === 1 ? "" : "s"}`;
+  els.presetCount.textContent = `${visibleItems.length} session${visibleItems.length === 1 ? "" : "s"}`;
 
   if (visibleItems.length === 0) {
     els.items.innerHTML = '<div class="empty-state">No presets match the current search or filter.</div>';
@@ -200,27 +223,65 @@ function renderItems() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `preset-card ${state.selectedItemId === item.id ? "selected" : ""} ${item.valid ? "" : "invalid"}`;
+    const sceneCount = Array.isArray(item.scenes) ? item.scenes.length : 0;
+    const sceneSummary = `${sceneCount} scene${sceneCount === 1 ? "" : "s"}`;
+    const defaultSceneLabel =
+      item.default_scene_id && Array.isArray(item.scenes)
+        ? item.scenes.find((scene) => scene.id === item.default_scene_id)?.label || item.default_scene_id
+        : sceneCount > 0
+          ? item.scenes[0]?.label || item.scenes[0]?.id || "default"
+          : "default";
+    const statusLabel = !item.valid ? "Error" : item.active ? "Running" : "Valid";
+    const statusClass = !item.valid ? "error" : item.active ? "running" : "valid";
+    const datasetLabel = titleCase(item.dataset || "auto");
+    const inputLabel = basename(item.input || "none");
+    const configLabel = basename(item.path || "none");
+    const displayDescription = trimSceneSuffix(item.description || "Ready-to-play preset");
     const statePill = item.valid
       ? item.active
         ? '<span class="pill">running</span>'
         : ""
       : '<span class="pill danger">invalid</span>';
     button.innerHTML = `
-      <div class="preset-header">
-        <div class="preset-title-group">
-          <h3>${escapeHtml(item.label)}</h3>
-          <p class="preset-desc">${escapeHtml(item.description || "Ready-to-play preset")}</p>
+      <div class="session-card-main">
+        <div class="session-card-copy">
+          <div class="preset-header">
+            <div class="preset-title-group">
+              <h3>${escapeHtml(item.label)}</h3>
+              <p class="preset-desc">${escapeHtml(displayDescription || sceneSummary)}</p>
+            </div>
+            <div class="session-status session-status-${statusClass}">
+              <span class="session-status-dot"></span>
+              <span>${escapeHtml(statusLabel)}</span>
+            </div>
+          </div>
+          <div class="session-meta-row">
+            <span class="session-meta-item">${escapeHtml(sceneSummary)}</span>
+          </div>
         </div>
-        <span class="pill">${escapeHtml(item.dataset || "auto")}</span>
+        <div class="session-card-side">
+          <div class="session-chip-row">
+            <span class="session-chip">${escapeHtml(datasetLabel)}</span>
+            <span class="session-chip">${escapeHtml(sceneSummary)}</span>
+            ${statePill}
+          </div>
+          <div class="session-detail-grid">
+            <div class="session-detail-box">
+              <span>Default Scene</span>
+              <strong>${escapeHtml(defaultSceneLabel || "default")}</strong>
+            </div>
+            <div class="session-detail-box">
+              <span>Config</span>
+              <strong>${escapeHtml(configLabel)}</strong>
+            </div>
+            <div class="session-detail-box">
+              <span>Input</span>
+              <strong>${escapeHtml(inputLabel)}</strong>
+            </div>
+          </div>
+        </div>
       </div>
-      <p class="preset-path">${escapeHtml(item.path)}</p>
       ${item.valid ? "" : `<p class="preset-desc danger-copy">${escapeHtml(item.error || "Config parse failed")}</p>`}
-      <div class="preset-footer">
-        <div class="tag-row">
-          <span class="tag">${escapeHtml(item.input || "no input")}</span>
-        </div>
-        ${statePill}
-      </div>
     `;
     button.addEventListener("click", () => {
       if (!item.valid) {
@@ -272,6 +333,37 @@ function renderLibrarySummary() {
   els.selectedSceneSummary.textContent = scene?.description || item?.description || "Pick a preset to see what will be launched.";
 }
 
+function renderViewerSceneSelector() {
+  const item = getActiveItem();
+  const scenes = Array.isArray(item?.scenes) ? item.scenes : [];
+
+  if (!item || scenes.length <= 1 || !["starting", "running"].includes(state.status)) {
+    els.viewerScenePanel.classList.add("hidden");
+    els.viewerSceneSelect.innerHTML = "";
+    els.viewerSceneDescription.textContent = "Choose a scene from the active dataset.";
+    els.viewerSceneCount.textContent = "";
+    els.viewerSceneApplyBtn.disabled = true;
+    return;
+  }
+
+  state.viewerSceneId = chooseSceneId(item, state.viewerSceneId || state.activeSceneId);
+  const activeViewerScene = getViewerScene(item) || scenes[0];
+
+  els.viewerScenePanel.classList.remove("hidden");
+  els.viewerSceneSelect.innerHTML = "";
+  scenes.forEach((scene) => {
+    const option = document.createElement("option");
+    option.value = scene.id;
+    option.textContent = scene.label || scene.id;
+    els.viewerSceneSelect.appendChild(option);
+  });
+  els.viewerSceneSelect.value = state.viewerSceneId || scenes[0].id;
+  els.viewerSceneDescription.textContent =
+    activeViewerScene.description || "Choose a different scene and relaunch the active dataset into it.";
+  els.viewerSceneCount.textContent = `${scenes.length} scenes`;
+  els.viewerSceneApplyBtn.disabled = state.launchPending;
+}
+
 function renderLogs() {
   const query = state.logSearch.trim().toLowerCase();
   const visibleLogs = query
@@ -295,6 +387,12 @@ function renderLogs() {
 
 function renderStatus() {
   const tone = toneForStatus(state.status);
+  const totalSessions = state.items.length;
+  const totalScenes = state.items.reduce((count, item) => count + (Array.isArray(item.scenes) ? item.scenes.length : 0), 0);
+  const validSessions = state.items.filter((item) => item.valid).length;
+  const viewerIsReady = Boolean(state.activeItem) && state.status === "running";
+  const viewerIsStarting = Boolean(state.activeItem) && state.status === "starting";
+
   els.statusText.textContent = state.status;
   els.statusPill.textContent = state.status;
   els.statusPill.dataset.tone = tone;
@@ -328,16 +426,24 @@ function renderStatus() {
     els.viewerFrame.src = state.viewerUrl;
     els.viewerFrame.dataset.currentSessionKey = viewerSessionKey;
   }
-
-  els.sessionItem.textContent = state.activeItem || "none";
-  els.sessionScene.textContent = state.activeSceneId || "default";
-  els.sessionViewerUrl.textContent = state.viewerUrl;
-  els.sessionRecordingPath.textContent = state.recordingPath && state.recordingPath !== "none" ? state.recordingPath : "none";
+  els.viewerEmptyState.classList.toggle("hidden", viewerIsReady);
+  if (viewerIsStarting) {
+    els.viewerEmptyTitle.textContent = "Starting Viewer";
+    els.viewerEmptyCopy.textContent = "The dataset is launching now. The embedded viewer will appear here as soon as the session is ready.";
+  } else {
+    els.viewerEmptyTitle.textContent = "No Active Session";
+    els.viewerEmptyCopy.textContent = "Launch a dataset from the Library page to open a live Rerun viewer here.";
+  }
 
   els.viewerSessionItem.textContent = state.activeItem || "none";
   els.viewerSessionScene.textContent = state.activeSceneId || "default";
   els.viewerSessionStatus.textContent = state.status;
   els.viewerSessionUrl.textContent = state.viewerUrl;
+
+  els.totalSessions.textContent = String(totalSessions);
+  els.recordingDuration.textContent = formatDuration(state.startedAt);
+  els.totalScenes.textContent = String(totalScenes);
+  els.validatedCount.textContent = `${validSessions}/${totalSessions}`;
 
   if (state.lastError) {
     els.lastError.textContent = state.lastError;
@@ -357,11 +463,11 @@ function appendLog(message) {
 }
 
 function renderAll() {
-  renderDatasetFilter();
   renderItems();
   renderSceneSelector();
   renderLibrarySummary();
   renderStatus();
+  renderViewerSceneSelector();
   renderLogs();
   renderRoute();
 }
@@ -377,6 +483,7 @@ async function refreshAll() {
   state.status = statusPayload.status || "idle";
   state.activeItem = statusPayload.current_item_id;
   state.activeSceneId = statusPayload.current_scene_id || null;
+  state.viewerSceneId = state.activeSceneId || null;
   state.viewerUrl = statusPayload.viewer_url || state.viewerUrl;
   state.grpcUrl = statusPayload.grpc_url || state.grpcUrl;
   state.recordingPath = statusPayload.recording_path || "none";
@@ -456,6 +563,51 @@ async function stopCurrent() {
   }
 }
 
+async function switchViewerScene() {
+  if (state.launchPending) {
+    return;
+  }
+
+  const activeItem = getActiveItem();
+  if (!activeItem) {
+    appendLog("No active dataset is available to switch scenes.");
+    return;
+  }
+  if (!state.viewerSceneId) {
+    appendLog("Choose a scene before switching.");
+    return;
+  }
+
+  const nextScene = getViewerScene(activeItem);
+  if (state.viewerSceneId === state.activeSceneId) {
+    appendLog(`Scene ${nextScene?.label || state.viewerSceneId} is already active.`);
+    return;
+  }
+
+  try {
+    state.launchPending = true;
+    renderStatus();
+    renderViewerSceneSelector();
+    await fetchJson("/api/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        item_id: activeItem.id,
+        scene_id: state.viewerSceneId,
+        save_recording: state.saveRecording,
+      }),
+    });
+    appendLog(`Switched ${activeItem.label} to scene ${nextScene?.label || state.viewerSceneId}.`);
+    await refreshAll();
+  } catch (error) {
+    appendLog(`Scene switch failed: ${error.message}`);
+  } finally {
+    state.launchPending = false;
+    renderStatus();
+    renderViewerSceneSelector();
+  }
+}
+
 function bindEvents() {
   window.addEventListener("hashchange", () => {
     state.route = getRouteFromHash();
@@ -494,18 +646,37 @@ function bindEvents() {
     state.presetSearch = event.target.value;
     renderItems();
   });
-  els.datasetFilter.addEventListener("change", (event) => {
-    state.datasetFilter = event.target.value;
-    renderItems();
-  });
   els.sceneSelect.addEventListener("change", (event) => {
     state.selectedSceneId = event.target.value || null;
     renderSceneSelector();
     renderLibrarySummary();
   });
+  els.viewerSceneSelect.addEventListener("change", (event) => {
+    state.viewerSceneId = event.target.value || null;
+    renderViewerSceneSelector();
+  });
+  els.viewerSceneApplyBtn.addEventListener("click", () => {
+    switchViewerScene().catch((error) => appendLog(`Scene switch failed: ${error.message}`));
+  });
   els.logSearch.addEventListener("input", (event) => {
     state.logSearch = event.target.value;
     renderLogs();
+  });
+  els.viewerFullscreenBtn.addEventListener("click", async () => {
+    const viewerContainer = els.viewerFrame.closest(".panel");
+    if (!viewerContainer) {
+      return;
+    }
+
+    try {
+      if (document.fullscreenElement === viewerContainer) {
+        await document.exitFullscreen();
+        return;
+      }
+      await viewerContainer.requestFullscreen();
+    } catch (error) {
+      appendLog(`Fullscreen failed: ${error.message}`);
+    }
   });
 }
 
@@ -529,15 +700,27 @@ function init() {
   els.recordingName = $("recording-name");
   els.recordingPath = $("recording-path");
   els.startedAt = $("started-at");
+  els.totalSessions = $("total-sessions");
+  els.recordingDuration = $("recording-duration");
+  els.totalScenes = $("total-scenes");
+  els.validatedCount = $("validated-count");
   els.refreshBtn = $("refresh-btn");
   els.stopBtn = $("stop-btn");
   els.launchBtn = $("launch-btn");
   els.items = $("items");
   els.logs = $("logs");
   els.viewerFrame = $("viewer-frame");
+  els.viewerEmptyState = $("viewer-empty-state");
+  els.viewerEmptyTitle = $("viewer-empty-title");
+  els.viewerEmptyCopy = $("viewer-empty-copy");
+  els.viewerFullscreenBtn = $("viewer-fullscreen-btn");
+  els.viewerScenePanel = $("viewer-scene-panel");
+  els.viewerSceneSelect = $("viewer-scene-select");
+  els.viewerSceneDescription = $("viewer-scene-description");
+  els.viewerSceneCount = $("viewer-scene-count");
+  els.viewerSceneApplyBtn = $("viewer-scene-apply-btn");
   els.saveRecordingToggle = $("save-recording-toggle");
   els.presetSearch = $("preset-search");
-  els.datasetFilter = $("dataset-filter");
   els.logSearch = $("log-search");
   els.presetCount = $("preset-count");
   els.sceneSelector = $("scene-selector");
@@ -551,10 +734,6 @@ function init() {
   els.selectedSceneName = $("selected-scene-name");
   els.selectedSceneSummary = $("selected-scene-summary");
 
-  els.sessionItem = $("session-item");
-  els.sessionScene = $("session-scene");
-  els.sessionViewerUrl = $("session-viewer-url");
-  els.sessionRecordingPath = $("session-recording-path");
   els.viewerSessionItem = $("viewer-session-item");
   els.viewerSessionScene = $("viewer-session-scene");
   els.viewerSessionStatus = $("viewer-session-status");

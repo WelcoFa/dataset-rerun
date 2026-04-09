@@ -64,157 +64,147 @@
       </header>
 
       <section id="page-library" class="route-page">
-        <section class="hero-grid">
-          <article class="metric-card metric-card-accent">
-            <div class="metric-icon">S</div>
-            <div>
-              <span class="metric-label">Session State</span>
-              <strong id="status-text" class="metric-value">idle</strong>
-              <p class="metric-copy">Current process lifecycle state from the dashboard server.</p>
-            </div>
-          </article>
-          <article class="metric-card">
-            <div class="metric-icon">V</div>
-            <div>
-              <span class="metric-label">Viewer Endpoint</span>
-              <strong id="viewer-port" class="metric-value">9090</strong>
-              <p id="grpc-url" class="metric-copy">rerun+http://localhost:9876/proxy</p>
-            </div>
-          </article>
-          <article class="metric-card">
-            <div class="metric-icon">R</div>
-            <div>
-              <span class="metric-label">Recording Output</span>
-              <strong id="recording-name" class="metric-value">none</strong>
-              <p id="recording-path" class="metric-copy">No `.rrd` file attached</p>
-            </div>
-          </article>
-          <article class="metric-card">
-            <div class="metric-icon">T</div>
-            <div>
-              <span class="metric-label">Started At</span>
-              <strong id="started-at" class="metric-value">not started</strong>
-              <p class="metric-copy">Launches update automatically while the app polls the backend.</p>
-            </div>
-          </article>
-        </section>
-
-        <div class="page-grid page-grid-library">
-          <section class="panel">
-            <div class="panel-header">
+        <section class="session-explorer-shell">
+          <div class="session-explorer-header">
+            <div class="session-explorer-header-main">
+              <div class="session-explorer-badge">Sessions</div>
               <div>
-                <p class="panel-kicker">Library</p>
-                <h3>Choose what to run</h3>
+                <h3 class="session-explorer-title">Session Explorer</h3>
+                <p class="session-explorer-copy">Browse and analyze runnable multi-modal session presets.</p>
               </div>
-              <span id="preset-count" class="panel-meta">0 presets</span>
             </div>
-
-            <div class="toolbar-row">
-              <label class="search-field">
-                <span class="sr-only">Search presets</span>
-                <input id="preset-search" type="search" placeholder="Search dataset, config, input path">
-              </label>
-              <label class="select-field">
-                <span class="sr-only">Filter presets</span>
-                <select id="dataset-filter">
-                  <option value="all">All datasets</option>
-                </select>
-              </label>
+            <div class="session-explorer-actions">
+              <button id="session-refresh-btn" class="btn btn-ghost btn-compact" type="button">Refresh</button>
+              <a class="btn btn-primary btn-compact" href="#/viewer">Viewer</a>
             </div>
+          </div>
 
-            <div id="scene-selector" class="scene-selector hidden">
-              <div class="scene-selector-head">
-                <div>
-                  <p class="panel-kicker">Scene</p>
-                  <h3>Scene selection</h3>
-                </div>
-                <span id="scene-count" class="panel-meta"></span>
+          <div class="session-filter-row">
+            <label class="search-field search-field-session">
+              <span class="field-symbol">Q</span>
+              <span class="sr-only">Search presets</span>
+              <input id="preset-search" type="search" placeholder="Search sessions by name, dataset, or path...">
+            </label>
+          </div>
+
+          <section class="hero-grid hero-grid-session">
+            <article class="metric-card metric-card-blue">
+              <div class="metric-card-icon metric-card-icon-blue">D</div>
+              <div class="metric-stack">
+                <strong id="total-sessions" class="metric-value">0</strong>
+                <span class="metric-label">Total Sessions</span>
               </div>
-              <label class="select-field">
-                <span class="sr-only">Choose scene</span>
-                <select id="scene-select"></select>
-              </label>
-              <p id="scene-description" class="preset-desc"></p>
-            </div>
-
-            <div id="items" class="card-list"></div>
+            </article>
+            <article class="metric-card metric-card-purple">
+              <div class="metric-card-icon metric-card-icon-purple">C</div>
+              <div class="metric-stack">
+                <strong id="recording-duration" class="metric-value">0h 00m</strong>
+                <span class="metric-label">Recording Time</span>
+              </div>
+            </article>
+            <article class="metric-card metric-card-teal">
+              <div class="metric-card-icon metric-card-icon-teal">S</div>
+              <div class="metric-stack">
+                <strong id="total-scenes" class="metric-value">0</strong>
+                <span class="metric-label">Total Scenes</span>
+              </div>
+            </article>
+            <article class="metric-card metric-card-amber">
+              <div class="metric-card-icon metric-card-icon-amber">V</div>
+              <div class="metric-stack">
+                <strong id="validated-count" class="metric-value">0/0</strong>
+                <span class="metric-label">Validated</span>
+              </div>
+            </article>
           </section>
 
-          <aside class="stack-column">
-            <section class="panel">
-              <div class="panel-header">
+          <div class="legacy-metric-sinks hidden" aria-hidden="true">
+            <span id="status-text">idle</span>
+            <span id="viewer-port">9090</span>
+            <span id="grpc-url">rerun+http://localhost:9876/proxy</span>
+            <span id="recording-name">none</span>
+            <span id="recording-path">No `.rrd` file attached</span>
+            <span id="started-at">not started</span>
+          </div>
+
+          <div class="page-grid page-grid-library session-grid-layout">
+            <section class="panel session-list-panel">
+              <div class="panel-header panel-header-session">
                 <div>
-                  <p class="panel-kicker">Launch Plan</p>
-                  <h3>Run summary</h3>
+                  <p class="panel-kicker">Sessions</p>
+                  <h3>Available presets</h3>
                 </div>
+                <span id="preset-count" class="panel-meta">0 presets</span>
               </div>
-              <div class="detail-grid">
-                <div class="detail-row">
-                  <span>Selected preset</span>
-                  <strong id="selected-item-name">none</strong>
+
+              <div id="scene-selector" class="scene-selector hidden scene-selector-session">
+                <div class="scene-selector-head">
+                  <div>
+                    <p class="panel-kicker">Scene</p>
+                    <h3>Scene selection</h3>
+                  </div>
+                  <span id="scene-count" class="panel-meta"></span>
                 </div>
-                <div class="detail-row">
-                  <span>Dataset</span>
-                  <strong id="selected-item-dataset">none</strong>
-                </div>
-                <div class="detail-row">
-                  <span>Input</span>
-                  <code id="selected-item-input">none</code>
-                </div>
-                <div class="detail-row">
-                  <span>Scene</span>
-                  <strong id="selected-scene-name">default</strong>
-                </div>
+                <label class="select-field select-field-session">
+                  <span class="field-symbol">S</span>
+                  <span class="sr-only">Choose scene</span>
+                  <select id="scene-select"></select>
+                </label>
+                <p id="scene-description" class="preset-desc"></p>
               </div>
-              <p id="selected-scene-summary" class="muted summary-copy">Pick a preset to see what will be launched.</p>
+
+              <div id="items" class="card-list session-card-list"></div>
             </section>
 
-            <section class="panel">
-              <div class="panel-header">
-                <div>
-                  <p class="panel-kicker">Actions</p>
-                  <h3>Launch controls</h3>
+            <aside class="stack-column">
+              <section class="panel">
+                <div class="panel-header">
+                  <div>
+                    <p class="panel-kicker">Launch Plan</p>
+                    <h3>Run summary</h3>
+                  </div>
                 </div>
-              </div>
-              <label class="toggle-row">
-                <input id="save-recording-toggle" type="checkbox">
-                <span>Save `.rrd` on next launch</span>
-              </label>
-              <div class="action-stack">
-                <button id="launch-btn" class="btn btn-primary" type="button">Launch Selected</button>
-                <button id="stop-btn" class="btn btn-secondary" type="button">Stop Current</button>
-                <button id="refresh-btn" class="btn btn-ghost" type="button">Refresh Data</button>
-              </div>
-            </section>
-            <section class="panel">
-              <div class="panel-header">
-                <div>
-                  <p class="panel-kicker">Session</p>
-                  <h3>What is running now</h3>
+                <div class="detail-grid">
+                  <div class="detail-row">
+                    <span>Selected preset</span>
+                    <strong id="selected-item-name">none</strong>
+                  </div>
+                  <div class="detail-row">
+                    <span>Dataset</span>
+                    <strong id="selected-item-dataset">none</strong>
+                  </div>
+                  <div class="detail-row">
+                    <span>Input</span>
+                    <code id="selected-item-input">none</code>
+                  </div>
+                  <div class="detail-row">
+                    <span>Scene</span>
+                    <strong id="selected-scene-name">default</strong>
+                  </div>
                 </div>
-              </div>
-              <div class="detail-grid">
-                <div class="detail-row">
-                  <span>Preset</span>
-                  <strong id="session-item">none</strong>
-                </div>
-                <div class="detail-row">
-                  <span>Scene</span>
-                  <strong id="session-scene">default</strong>
-                </div>
-                <div class="detail-row">
-                  <span>Viewer</span>
-                  <code id="session-viewer-url">http://localhost:9090</code>
-                </div>
-                <div class="detail-row">
-                  <span>Recording file</span>
-                  <code id="session-recording-path">none</code>
-                </div>
-              </div>
-            </section>
+                <p id="selected-scene-summary" class="muted summary-copy">Pick a preset to see what will be launched.</p>
+              </section>
 
-          </aside>
-        </div>
+              <section class="panel">
+                <div class="panel-header">
+                  <div>
+                    <p class="panel-kicker">Actions</p>
+                    <h3>Launch controls</h3>
+                  </div>
+                </div>
+                <label class="toggle-row">
+                  <input id="save-recording-toggle" type="checkbox">
+                  <span>Save `.rrd` on next launch</span>
+                </label>
+                <div class="action-stack">
+                  <button id="launch-btn" class="btn btn-primary" type="button">Launch Selected</button>
+                  <button id="stop-btn" class="btn btn-secondary" type="button">Stop Current</button>
+                  <button id="refresh-btn" class="btn btn-ghost" type="button">Refresh Data</button>
+                </div>
+              </section>
+            </aside>
+          </div>
+        </section>
       </section>
 
       <section id="page-viewer" class="route-page hidden">
@@ -225,12 +215,40 @@
                 <p class="panel-kicker">Viewer</p>
                 <h3>Embedded Rerun session</h3>
               </div>
-              <span class="panel-meta">Use this page when you want visualization and debugging side by side.</span>
+              <div class="viewer-panel-actions">
+                <span class="panel-meta">Use this page when you want visualization and debugging side by side.</span>
+                <button id="viewer-fullscreen-btn" class="btn btn-ghost btn-compact" type="button">Fullscreen</button>
+              </div>
             </div>
-            <iframe id="viewer-frame" src="http://localhost:9090" title="Rerun Viewer"></iframe>
+            <div class="viewer-frame-shell">
+              <iframe id="viewer-frame" src="http://localhost:9090" title="Rerun Viewer"></iframe>
+              <div id="viewer-empty-state" class="viewer-empty-state hidden">
+                <div class="viewer-empty-card">
+                  <div class="viewer-empty-icon">R</div>
+                  <h4 id="viewer-empty-title">No Active Session</h4>
+                  <p id="viewer-empty-copy">Launch a dataset from the Library page to open a live Rerun viewer here.</p>
+                </div>
+              </div>
+            </div>
           </section>
 
           <aside class="stack-column">
+            <section id="viewer-scene-panel" class="panel hidden">
+              <div class="panel-header">
+                <div>
+                  <p class="panel-kicker">Scene Switcher</p>
+                  <h3>Change active scene</h3>
+                </div>
+                <span id="viewer-scene-count" class="panel-meta"></span>
+              </div>
+              <label class="select-field select-field-session">
+                <span class="field-symbol">S</span>
+                <span class="sr-only">Choose viewer scene</span>
+                <select id="viewer-scene-select"></select>
+              </label>
+              <p id="viewer-scene-description" class="preset-desc">Choose a scene from the active dataset.</p>
+              <button id="viewer-scene-apply-btn" class="btn btn-primary" type="button">Switch Scene</button>
+            </section>
             <section class="panel">
               <div class="panel-header">
                 <div>
