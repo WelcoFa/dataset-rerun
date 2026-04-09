@@ -103,6 +103,84 @@ Useful dataset-specific flags include:
 - DexWild: `--dexwild-hdf5`, `--dexwild-episode`, `--dexwild-max-frames`
 - ThermoHands: `--thermohands-scene-dir`, `--thermohands-stride`, `--thermohands-max-frames`
 
+## Web Viewer
+
+The repo also ships with a lightweight web dashboard in `app_ui/` that sits in front of the Rerun viewer and the dataset launch scripts.
+
+It gives you:
+
+- a `Library` page for browsing ready-to-play dataset configs
+- session-style preset cards with search
+- per-dataset scene selection on the Library page
+- a `Viewer` page with embedded Rerun, logs, fullscreen, and scene switching for the active dataset
+- launch controls for live viewing or saving `.rrd` recordings
+
+### Run Locally
+
+Start the dashboard app directly with `uv`:
+
+```powershell
+uv run python scripts/serve_dashboard_app.py --app-port 8080 --viewer-port 9090 --grpc-port 9876
+```
+
+Open:
+
+- web dashboard: `http://localhost:8080`
+- embedded/open viewer target: `http://localhost:9090`
+
+By default the app reads:
+
+- configs from `configs/`
+- saved recordings and logs from `outputs/`
+
+You can override those paths:
+
+```powershell
+uv run python scripts/serve_dashboard_app.py --config-dir .\configs --outputs-dir .\outputs
+```
+
+### Run With Docker
+
+Build and start the dashboard service:
+
+```powershell
+docker compose build rerun-dashboard
+docker compose up -d rerun-dashboard
+```
+
+Default exposed ports:
+
+- app UI: `8080`
+- Rerun web viewer: `9090`
+- Rerun gRPC proxy: `9876`
+
+The Docker setup bind-mounts `app_ui/`, `scripts/`, `configs/`, and `rerun_viz/`, so UI changes usually only need a browser refresh instead of a full rebuild.
+
+### Web Viewer Flow
+
+1. Open the `Library` page.
+2. Pick a dataset preset from `Available presets`.
+3. If that dataset has multiple scenes, choose a scene from the right-side scene selector.
+4. Review `Run summary`, then click `Launch Selected`.
+5. Move to the `Viewer` page to inspect the embedded Rerun session, logs, and active scene.
+6. If the dataset has multiple scenes, use the Viewer-side scene switcher to relaunch the same dataset into a different scene.
+
+### Main API Endpoints
+
+The dashboard app serves these endpoints:
+
+- `GET /api/items`
+- `GET /api/status`
+- `GET /api/logs`
+- `POST /api/open`
+- `POST /api/stop`
+
+Static assets are served from:
+
+- `/index.html`
+- `/styles.css`
+- `/app.js`
+
 ## GigaHands Workflow
 
 The current GigaHands workflow has three layers:

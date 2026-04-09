@@ -489,6 +489,10 @@ p {
   margin-bottom: 18px;
 }
 
+.session-list-panel > .search-field {
+  margin-bottom: 18px;
+}
+
 .panel-library {
   padding: 22px;
 }

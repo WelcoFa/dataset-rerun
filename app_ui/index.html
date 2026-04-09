@@ -65,28 +65,6 @@
 
       <section id="page-library" class="route-page">
         <section class="session-explorer-shell">
-          <div class="session-explorer-header">
-            <div class="session-explorer-header-main">
-              <div class="session-explorer-badge">Sessions</div>
-              <div>
-                <h3 class="session-explorer-title">Session Explorer</h3>
-                <p class="session-explorer-copy">Browse and analyze runnable multi-modal session presets.</p>
-              </div>
-            </div>
-            <div class="session-explorer-actions">
-              <button id="session-refresh-btn" class="btn btn-ghost btn-compact" type="button">Refresh</button>
-              <a class="btn btn-primary btn-compact" href="#/viewer">Viewer</a>
-            </div>
-          </div>
-
-          <div class="session-filter-row">
-            <label class="search-field search-field-session">
-              <span class="field-symbol">Q</span>
-              <span class="sr-only">Search presets</span>
-              <input id="preset-search" type="search" placeholder="Search sessions by name, dataset, or path...">
-            </label>
-          </div>
-
           <section class="hero-grid hero-grid-session">
             <article class="metric-card metric-card-blue">
               <div class="metric-card-icon metric-card-icon-blue">D</div>
@@ -136,22 +114,11 @@
                 </div>
                 <span id="preset-count" class="panel-meta">0 presets</span>
               </div>
-
-              <div id="scene-selector" class="scene-selector hidden scene-selector-session">
-                <div class="scene-selector-head">
-                  <div>
-                    <p class="panel-kicker">Scene</p>
-                    <h3>Scene selection</h3>
-                  </div>
-                  <span id="scene-count" class="panel-meta"></span>
-                </div>
-                <label class="select-field select-field-session">
-                  <span class="field-symbol">S</span>
-                  <span class="sr-only">Choose scene</span>
-                  <select id="scene-select"></select>
-                </label>
-                <p id="scene-description" class="preset-desc"></p>
-              </div>
+              <label class="search-field search-field-session">
+                <span class="field-symbol">Q</span>
+                <span class="sr-only">Search presets</span>
+                <input id="preset-search" type="search" placeholder="Search sessions by name, dataset, or path...">
+              </label>
 
               <div id="items" class="card-list session-card-list"></div>
             </section>
@@ -183,6 +150,22 @@
                   </div>
                 </div>
                 <p id="selected-scene-summary" class="muted summary-copy">Pick a preset to see what will be launched.</p>
+              </section>
+
+              <section id="scene-selector" class="panel hidden">
+                <div class="panel-header">
+                  <div>
+                    <p class="panel-kicker">Scene</p>
+                    <h3>Scene selection</h3>
+                  </div>
+                  <span id="scene-count" class="panel-meta"></span>
+                </div>
+                <label class="select-field select-field-session">
+                  <span class="field-symbol">S</span>
+                  <span class="sr-only">Choose scene</span>
+                  <select id="scene-select"></select>
+                </label>
+                <p id="scene-description" class="preset-desc"></p>
               </section>
 
               <section class="panel">

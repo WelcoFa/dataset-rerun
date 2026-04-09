@@ -195,6 +195,23 @@ function setSelectedItem(itemId, preferredSceneId = null) {
   renderLibrarySummary();
 }
 
+function focusLibrarySelection() {
+  if (state.route !== "library" || !els.items) {
+    return;
+  }
+
+  const scrollTarget = els.items.closest(".session-list-panel") || els.items.closest(".panel");
+  if (!scrollTarget) {
+    return;
+  }
+
+  const targetTop = scrollTarget.getBoundingClientRect().top + window.scrollY - 20;
+  window.scrollTo({
+    top: Math.max(0, targetTop),
+    behavior: "smooth",
+  });
+}
+
 function renderRoute() {
   const route = ROUTES[state.route] ? state.route : "library";
   els.routeTitle.textContent = ROUTES[route].title;
@@ -292,6 +309,7 @@ function renderItems() {
       renderItems();
       renderSceneSelector();
       renderLibrarySummary();
+      focusLibrarySelection();
     });
     els.items.appendChild(button);
   });
@@ -348,6 +366,7 @@ function renderViewerSceneSelector() {
 
   state.viewerSceneId = chooseSceneId(item, state.viewerSceneId || state.activeSceneId);
   const activeViewerScene = getViewerScene(item) || scenes[0];
+  const hasSceneChange = Boolean(state.viewerSceneId) && state.viewerSceneId !== state.activeSceneId;
 
   els.viewerScenePanel.classList.remove("hidden");
   els.viewerSceneSelect.innerHTML = "";
@@ -361,7 +380,7 @@ function renderViewerSceneSelector() {
   els.viewerSceneDescription.textContent =
     activeViewerScene.description || "Choose a different scene and relaunch the active dataset into it.";
   els.viewerSceneCount.textContent = `${scenes.length} scenes`;
-  els.viewerSceneApplyBtn.disabled = state.launchPending;
+  els.viewerSceneApplyBtn.disabled = state.launchPending || !hasSceneChange;
 }
 
 function renderLogs() {
