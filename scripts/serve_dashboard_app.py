@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -53,6 +53,7 @@ class SceneOption:
     description: str
     selection: dict[str, Any]
     dataset_options: dict[str, Any]
+    details: list[dict[str, str]]
 
 
 def utc_now() -> str:
@@ -199,6 +200,12 @@ class DashboardAppState:
             return path
         return (REPO_ROOT / path).resolve()
 
+    def _path_option_value(self, path: Path) -> str:
+        return str(path)
+
+    def _scene_detail(self, label: str, value: Any) -> dict[str, str]:
+        return {"label": str(label), "value": str(value)}
+
     def _normalize_scene_entry(self, entry: Any) -> SceneOption | None:
         if not isinstance(entry, dict):
             return None
@@ -220,12 +227,23 @@ class DashboardAppState:
 
         label = str(entry.get("label") or scene_id).strip() or scene_id
         description = str(entry.get("description") or "").strip()
+        raw_details = entry.get("details", [])
+        details = []
+        if isinstance(raw_details, list):
+            for detail in raw_details:
+                if not isinstance(detail, dict):
+                    continue
+                detail_label = str(detail.get("label", "")).strip()
+                detail_value = str(detail.get("value", "")).strip()
+                if detail_label and detail_value:
+                    details.append({"label": detail_label, "value": detail_value})
         return SceneOption(
             scene_id=scene_id,
             label=label,
             description=description,
             selection=selection,
             dataset_options=dataset_options,
+            details=details,
         )
 
     def _looks_like_gigahands_root(self, path: Path) -> bool:
@@ -349,6 +367,13 @@ class DashboardAppState:
                     description=description,
                     selection=chosen,
                     dataset_options={},
+                    details=[
+                        self._scene_detail("RGB Video", "Available"),
+                        self._scene_detail("Keypoints 2D", "Left / Right"),
+                        self._scene_detail("Keypoints 3D", "Left / Right"),
+                        self._scene_detail("Object Pose", "Available"),
+                        self._scene_detail("Semantic JSON", "Ready" if has_semantics else "Missing"),
+                    ],
                 )
             )
         return scenes
@@ -365,7 +390,6 @@ class DashboardAppState:
                 continue
             if not all((child / name).is_dir() for name in ("rgb", "thermal", "ir", "depth", "gt_info")):
                 continue
-            scene_dir_value = f"/data/thermohands/{child.name}"
             description = f"scene {child.name}"
             scenes.append(
                 SceneOption(
@@ -373,7 +397,12 @@ class DashboardAppState:
                     label=child.name,
                     description=description,
                     selection={},
-                    dataset_options={"thermohands_scene_dir": scene_dir_value},
+                    dataset_options={"thermohands_scene_dir": self._path_option_value(child)},
+                    details=[
+                        self._scene_detail("Scene Folder", child.name),
+                        self._scene_detail("Modalities", "RGB / Thermal / IR / Depth"),
+                        self._scene_detail("GT Info", "Available"),
+                    ],
                 )
             )
 
@@ -412,6 +441,12 @@ class DashboardAppState:
                     description=description,
                     selection={"sequence_name": child.name},
                     dataset_options={},
+                    details=[
+                        self._scene_detail("Hand Data", "Available"),
+                        self._scene_detail("Ground Truth", "Available"),
+                        self._scene_detail("Object Models", "Available"),
+                        self._scene_detail("MANO Models", "Available"),
+                    ],
                 )
             )
         return scenes
@@ -440,9 +475,14 @@ class DashboardAppState:
                     description=description,
                     selection={},
                     dataset_options={
-                        "beingh0_subset_dir": f"/data/Being-h0/h0_post_train_db_2508/{child.name}",
-                        "beingh0_jsonl": f"/data/Being-h0/h0_post_train_db_2508/{child.name}/{jsonl_path.name}",
+                        "beingh0_subset_dir": self._path_option_value(child),
+                        "beingh0_jsonl": self._path_option_value(jsonl_path),
                     },
+                    details=[
+                        self._scene_detail("Images", "Available"),
+                        self._scene_detail("Train JSONL", jsonl_path.name),
+                        self._scene_detail("Subset Format", "Image folder + annotations"),
+                    ],
                 )
             )
         return scenes
@@ -481,9 +521,15 @@ class DashboardAppState:
                         description=description,
                         selection={},
                         dataset_options={
-                            "dexwild_hdf5": f"/data/dexwild/{hdf5_path.name}",
+                            "dexwild_hdf5": self._path_option_value(hdf5_path),
                             "dexwild_episode": episode_name,
                         },
+                        details=[
+                            self._scene_detail("Source Format", "HDF5 episode"),
+                            self._scene_detail("RGB Frames", "Stored in HDF5"),
+                            self._scene_detail("Hand Data", "Stored in HDF5"),
+                            self._scene_detail("Source File", hdf5_path.name),
+                        ],
                     )
                 )
         return scenes
@@ -493,7 +539,7 @@ class DashboardAppState:
         if input_path is None or not input_path.exists() or not input_path.is_dir():
             return []
 
-        task_json_path = f"/data/wyih/task.json"
+        task_json_path = input_path / "task.json"
         configured_action_dir = str(dataset_options.get("action_dir", "")).replace("\\", "/")
         scenes: list[SceneOption] = []
         for child in sorted(input_path.iterdir()):
@@ -509,9 +555,14 @@ class DashboardAppState:
                     description=description,
                     selection={},
                     dataset_options={
-                        "action_dir": f"/data/wyih/{child.name}",
-                        "task_json": task_json_path,
+                        "action_dir": self._path_option_value(child),
+                        "task_json": self._path_option_value(task_json_path),
                     },
+                    details=[
+                        self._scene_detail("dataset.hdf5", "Available"),
+                        self._scene_detail("task.json", task_json_path.name),
+                        self._scene_detail("Format", "Action folder + HDF5"),
+                    ],
                 )
             )
         return scenes
@@ -628,6 +679,7 @@ class DashboardAppState:
                             "label": scene.label,
                             "description": scene.description,
                             "selection": scene.selection,
+                            "details": scene.details,
                         }
                         for scene in item.scenes
                     ],
@@ -636,6 +688,85 @@ class DashboardAppState:
                 }
                 for item in self.items
             ]
+
+    def _get_item(self, item_id: str) -> PlayableItem | None:
+        return next((item for item in self.items if item.item_id == item_id), None)
+
+    def _build_tree_node(
+        self,
+        path: Path,
+        *,
+        root: Path,
+        max_depth: int,
+        max_entries: int,
+        counters: dict[str, int],
+    ) -> dict[str, Any]:
+        counters["entries"] += 1
+        if counters["entries"] > max_entries:
+            raise RuntimeError(f"Tree truncated after {max_entries} entries")
+
+        try:
+            rel_path = path.relative_to(root)
+            display_path = "." if str(rel_path) == "." else str(rel_path)
+        except ValueError:
+            display_path = str(path)
+
+        node: dict[str, Any] = {
+            "name": path.name or str(path),
+            "path": display_path,
+            "kind": "directory" if path.is_dir() else "file",
+        }
+
+        if path.is_dir():
+            children: list[dict[str, Any]] = []
+            if max_depth > 0:
+                for child in sorted(path.iterdir(), key=lambda entry: (not entry.is_dir(), entry.name.lower())):
+                    children.append(
+                        self._build_tree_node(
+                            child,
+                            root=root,
+                            max_depth=max_depth - 1,
+                            max_entries=max_entries,
+                            counters=counters,
+                        )
+                    )
+            node["children"] = children
+            if max_depth == 0:
+                node["truncated"] = True
+        else:
+            try:
+                node["size_bytes"] = path.stat().st_size
+            except OSError:
+                node["size_bytes"] = None
+        return node
+
+    def get_dataset_tree(self, item_id: str, *, max_depth: int = 6, max_entries: int = 1200) -> dict[str, Any]:
+        item = self._get_item(item_id)
+        if item is None:
+            raise ValueError(f"Unknown item: {item_id}")
+
+        root_path = self._resolve_input_path(item.input_path)
+        if root_path is None:
+            raise ValueError(f"Item '{item_id}' has no input path configured")
+        if not root_path.exists():
+            raise ValueError(f"Dataset path does not exist: {root_path}")
+
+        tree_root = root_path if root_path.is_dir() else root_path.parent
+        counters = {"entries": 0}
+        tree = self._build_tree_node(
+            tree_root,
+            root=tree_root,
+            max_depth=max_depth,
+            max_entries=max_entries,
+            counters=counters,
+        )
+        return {
+            "item_id": item.item_id,
+            "label": item.label,
+            "root_path": str(tree_root),
+            "tree": tree,
+            "entry_count": counters["entries"],
+        }
 
     def list_recordings(self) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
@@ -860,8 +991,6 @@ class DashboardAppHandler(BaseHTTPRequestHandler):
                 self._send_json({"logs": self.app_state.get_logs()})
                 return
             if self.path.startswith("/api/download?"):
-                from urllib.parse import parse_qs, urlparse
-
                 rel_path = parse_qs(urlparse(self.path).query).get("path", [None])[0]
                 if rel_path is None:
                     self._send_json({"error": "path is required"}, status=400)

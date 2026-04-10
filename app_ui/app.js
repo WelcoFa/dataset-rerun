@@ -83,6 +83,23 @@ function basename(path) {
   return String(path).split(/[\\/]/).pop() || path;
 }
 
+function renderSceneDetails(details = []) {
+  const normalized = Array.isArray(details) ? details.filter((detail) => detail?.label && detail?.value) : [];
+  if (!normalized.length) {
+    return '<div class="empty-state">No extra scene details available.</div>';
+  }
+  return normalized
+    .map(
+      (detail) => `
+        <div class="scene-detail-item">
+          <span>${escapeHtml(detail.label)}</span>
+          <strong>${escapeHtml(detail.value)}</strong>
+        </div>
+      `,
+    )
+    .join("");
+}
+
 function titleCase(value) {
   return String(value || "")
     .replaceAll(/[-_]+/g, " ")
@@ -233,7 +250,7 @@ function renderRoute() {
 function renderItems() {
   const visibleItems = getVisibleItems();
   els.items.innerHTML = "";
-  els.presetCount.textContent = `${visibleItems.length} session${visibleItems.length === 1 ? "" : "s"}`;
+  els.presetCount.textContent = `${visibleItems.length} dataset${visibleItems.length === 1 ? "" : "s"}`;
 
   if (visibleItems.length === 0) {
     els.items.innerHTML = '<div class="empty-state">No presets match the current search or filter.</div>';
@@ -322,11 +339,12 @@ function renderItems() {
 function renderSceneSelector() {
   const item = getSelectedItem();
   const scenes = Array.isArray(item?.scenes) ? item.scenes : [];
-  if (!item || scenes.length <= 1) {
+  if (!item || scenes.length === 0) {
     els.sceneSelector.classList.add("hidden");
     els.sceneSelect.innerHTML = "";
     els.sceneDescription.textContent = "";
     els.sceneCount.textContent = "";
+    els.sceneDetailList.innerHTML = "";
     return;
   }
 
@@ -340,9 +358,11 @@ function renderSceneSelector() {
     els.sceneSelect.appendChild(option);
   });
   els.sceneSelect.value = state.selectedSceneId || scenes[0].id;
+  els.sceneSelect.disabled = scenes.length === 1;
   const activeScene = getSelectedScene(item) || scenes[0];
   els.sceneDescription.textContent = activeScene.description || "Choose which scene to launch for this dataset preset.";
-  els.sceneCount.textContent = `${scenes.length} scenes`;
+  els.sceneCount.textContent = `${scenes.length} scene${scenes.length === 1 ? "" : "s"}`;
+  els.sceneDetailList.innerHTML = renderSceneDetails(activeScene.details);
 }
 
 function renderLibrarySummary() {
@@ -364,6 +384,7 @@ function renderViewerSceneSelector() {
     els.viewerSceneSelect.innerHTML = "";
     els.viewerSceneDescription.textContent = "Choose a scene from the active dataset.";
     els.viewerSceneCount.textContent = "";
+    els.viewerSceneDetailList.innerHTML = "";
     els.viewerSceneApplyBtn.disabled = true;
     return;
   }
@@ -384,6 +405,7 @@ function renderViewerSceneSelector() {
   els.viewerSceneDescription.textContent =
     activeViewerScene.description || "Choose a different scene and relaunch the active dataset into it.";
   els.viewerSceneCount.textContent = `${scenes.length} scenes`;
+  els.viewerSceneDetailList.innerHTML = renderSceneDetails(activeViewerScene.details);
   els.viewerSceneApplyBtn.disabled = state.launchPending || !hasSceneChange;
 }
 
@@ -421,7 +443,6 @@ function renderStatus() {
   els.statusPill.dataset.tone = tone;
   els.activeItem.textContent = state.activeItem || "none";
   els.activeScene.textContent = state.activeSceneId || "default";
-  els.viewerLink.href = state.viewerUrl;
   els.grpcUrl.textContent = state.grpcUrl || "rerun+http://localhost:9876/proxy";
   els.startedAt.textContent = formatDateTime(state.startedAt);
   els.recordingName.textContent = basename(state.recordingPath);
@@ -688,9 +709,6 @@ function bindEvents() {
         : "Launching without saving .rrd files.",
     );
   });
-  els.viewerLink.addEventListener("click", () => {
-    appendLog(`Opening viewer at ${state.viewerUrl}`);
-  });
   els.presetSearch.addEventListener("input", (event) => {
     state.presetSearch = event.target.value;
     renderItems();
@@ -744,7 +762,6 @@ function init() {
   els.activeItem = $("active-item");
   els.activeScene = $("active-scene");
   els.lastError = $("last-error");
-  els.viewerLink = $("viewer-link");
   els.viewerPort = $("viewer-port");
   els.grpcUrl = $("grpc-url");
   els.recordingName = $("recording-name");
@@ -771,6 +788,7 @@ function init() {
   els.viewerScenePanel = $("viewer-scene-panel");
   els.viewerSceneSelect = $("viewer-scene-select");
   els.viewerSceneDescription = $("viewer-scene-description");
+  els.viewerSceneDetailList = $("viewer-scene-detail-list");
   els.viewerSceneCount = $("viewer-scene-count");
   els.viewerSceneApplyBtn = $("viewer-scene-apply-btn");
   els.saveRecordingToggle = $("save-recording-toggle");
@@ -780,6 +798,7 @@ function init() {
   els.sceneSelector = $("scene-selector");
   els.sceneSelect = $("scene-select");
   els.sceneDescription = $("scene-description");
+  els.sceneDetailList = $("scene-detail-list");
   els.sceneCount = $("scene-count");
 
   els.selectedItemName = $("selected-item-name");

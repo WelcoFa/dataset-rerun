@@ -309,7 +309,36 @@ p {
   height: 22px;
   border-radius: 9px;
   background: linear-gradient(135deg, rgba(0, 117, 255, 0.85), rgba(1, 181, 116, 0.85));
-  font-size: 0.68rem;
+}
+
+.nav-icon-home {
+  background: linear-gradient(135deg, #3b82f6, #60a5fa);
+}
+
+.nav-icon-library {
+  background: linear-gradient(135deg, #8b5cf6, #c084fc);
+}
+
+.nav-icon-viewer {
+  background: linear-gradient(135deg, #10b981, #6ee7b7);
+}
+
+.nav-link-home.active,
+.nav-link-home:hover {
+  background: rgba(59, 130, 246, 0.14);
+  color: #dbeafe;
+}
+
+.nav-link-library.active,
+.nav-link-library:hover {
+  background: rgba(139, 92, 246, 0.14);
+  color: #ede9fe;
+}
+
+.nav-link-viewer.active,
+.nav-link-viewer:hover {
+  background: rgba(16, 185, 129, 0.14);
+  color: #d1fae5;
 }
 
 .main-shell {
@@ -661,6 +690,34 @@ p {
   padding: 16px;
 }
 
+.scene-detail-list {
+  display: grid;
+  gap: 10px;
+}
+
+.scene-detail-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.scene-detail-item span {
+  color: var(--muted-2);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.scene-detail-item strong {
+  color: var(--text);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
 .search-field,
 .select-field {
   display: flex;
@@ -695,6 +752,11 @@ p {
 
 .select-field select {
   appearance: none;
+}
+
+.select-field select:disabled {
+  opacity: 0.7;
+  cursor: default;
 }
 
 .select-field select option {
@@ -1025,6 +1087,7 @@ p {
 .log-entry.match {
   color: #ffe0a6;
 }
+
 
 .sr-only {
   position: absolute;

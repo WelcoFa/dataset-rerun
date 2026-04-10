@@ -19,16 +19,16 @@
         </div>
 
         <nav class="dashboard-nav" aria-label="Primary">
-          <a class="nav-link" href="#/home" data-route-link="home">
-            <span class="nav-icon">0</span>
+          <a class="nav-link nav-link-home" href="#/home" data-route-link="home">
+            <span class="nav-icon nav-icon-home"></span>
             <span>Home</span>
           </a>
-          <a class="nav-link" href="#/library" data-route-link="library">
-            <span class="nav-icon">1</span>
+          <a class="nav-link nav-link-library" href="#/library" data-route-link="library">
+            <span class="nav-icon nav-icon-library"></span>
             <span>Library</span>
           </a>
-          <a class="nav-link" href="#/viewer" data-route-link="viewer">
-            <span class="nav-icon">2</span>
+          <a class="nav-link nav-link-viewer" href="#/viewer" data-route-link="viewer">
+            <span class="nav-icon nav-icon-viewer"></span>
             <span>Viewer</span>
           </a>
         </nav>
@@ -37,7 +37,7 @@
           <span id="status-pill" class="status-pill" data-tone="idle">idle</span>
           <div class="rail-runtime-copy">
             <div class="rail-runtime-line">
-              <span class="rail-runtime-label">Preset</span>
+              <span class="rail-runtime-label">Dataset</span>
               <strong id="active-item">none</strong>
             </div>
             <div class="rail-runtime-line">
@@ -54,9 +54,6 @@
           <p class="page-kicker">Workspace</p>
           <h2 id="route-title">Library</h2>
           <p id="route-description" class="topbar-copy">Choose a dataset preset, pick a scene, launch a run, and monitor session details.</p>
-        </div>
-        <div class="topbar-actions">
-          <a id="viewer-link" class="btn btn-ghost" href="http://localhost:9090" target="_blank" rel="noreferrer">Open Viewer</a>
         </div>
       </header>
 
@@ -192,7 +189,7 @@
               <div class="panel-header panel-header-session">
                 <div>
                   <p class="panel-kicker">Sessions</p>
-                  <h3>Available presets</h3>
+                  <h3>Available datasets</h3>
                 </div>
                 <span id="preset-count" class="panel-meta">0 presets</span>
               </div>
@@ -214,10 +211,10 @@
                   </div>
                 </div>
                 <div class="detail-grid">
-                  <div class="detail-row">
-                    <span>Selected preset</span>
-                    <strong id="selected-item-name">none</strong>
-                  </div>
+              <div class="detail-row">
+                <span>Selected dataset</span>
+                <strong id="selected-item-name">none</strong>
+              </div>
                   <div class="detail-row">
                     <span>Dataset</span>
                     <strong id="selected-item-dataset">none</strong>
@@ -248,6 +245,7 @@
                   <select id="scene-select"></select>
                 </label>
                 <p id="scene-description" class="preset-desc"></p>
+                <div id="scene-detail-list" class="scene-detail-list"></div>
               </section>
 
               <section class="panel">
@@ -312,6 +310,7 @@
                 <select id="viewer-scene-select"></select>
               </label>
               <p id="viewer-scene-description" class="preset-desc">Choose a scene from the active dataset.</p>
+              <div id="viewer-scene-detail-list" class="scene-detail-list"></div>
               <button id="viewer-scene-apply-btn" class="btn btn-primary" type="button">Switch Scene</button>
             </section>
             <section class="panel">
