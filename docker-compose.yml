@@ -9,7 +9,7 @@ services:
       - uv
       - run
       - python
-      - scripts/serve_dashboard_app.py
+      - scripts/serve/serve_dashboard_app.py
       - --app-port
       - "8080"
       - --config-dir
@@ -45,7 +45,7 @@ services:
       - uv
       - run
       - python
-      - scripts/run_multidataset_vlm.py
+      - scripts/run/run_multidataset_vlm.py
       - --input
       - /data
       - --dataset

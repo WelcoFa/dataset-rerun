@@ -25,7 +25,7 @@ USE_SMOOTHER = True
 SMOOTH_WINDOW = 9
 
 BASE_DIR = Path(__file__).resolve().parent
-REPO_ROOT = BASE_DIR.parent
+REPO_ROOT = BASE_DIR.parents[2]
 DATA_ROOT = REPO_ROOT / "data" / "gigahands"
 GIGAHANDS_ROOT = DATA_ROOT / "gigahands_demo_all"
 ANNOTATIONS_DIR = DATA_ROOT / "annotations"

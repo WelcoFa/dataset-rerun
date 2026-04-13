@@ -9,7 +9,7 @@ This repo now includes a first Dockerized setup with two modes:
 
 The dashboard service now runs a small app entrypoint:
 
-- `scripts/serve_dashboard_app.py`
+- `scripts/serve/serve_dashboard_app.py`
 
 It uses the existing adapters in `rerun_viz/` and:
 
@@ -30,8 +30,8 @@ This works better on a NAS than `spawn=True`, which expects a local desktop view
 - `Dockerfile`
 - `.dockerignore`
 - `docker-compose.yml`
-- `scripts/serve_dashboard_app.py`
-- `scripts/serve_rerun_dashboard.py`
+- `scripts/serve/serve_dashboard_app.py`
+- `scripts/serve/serve_rerun_dashboard.py`
 
 ## Quick Start
 
@@ -80,7 +80,7 @@ Useful VLM overrides:
 ## Notes
 
 - The first version assumes your datasets are mounted into `./data`.
-- The app shell uses ready-to-play config files from `configs/` and launches `scripts/serve_rerun_dashboard.py` behind the scenes.
+- The app shell uses ready-to-play config files from `configs/` and launches `scripts/serve/serve_rerun_dashboard.py` behind the scenes.
 - WIYH pointcloud loading is disabled in `configs/docker-dashboard.toml` for the initial container setup because it needs extra `laspy[lazrs]` dependencies.
 - HOT3D MANO still needs the `hot3d-mano` extra and MANO assets if you want that mode in the container.
 - The VLM worker may need network access the first time it downloads model weights into `/models/huggingface`.

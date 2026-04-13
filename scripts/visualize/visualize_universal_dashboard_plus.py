@@ -13,7 +13,7 @@ import visualize_universal_dashboard as ud
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
 DEFAULT_INPUT = REPO_ROOT / "data"
 
 

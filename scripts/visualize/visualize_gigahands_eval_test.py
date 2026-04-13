@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import cv2
@@ -25,7 +26,7 @@ USE_SMOOTHER = True
 SMOOTH_WINDOW = 1
 
 BASE_DIR = Path(__file__).resolve().parent
-REPO_ROOT = BASE_DIR.parent
+REPO_ROOT = BASE_DIR.parents[1]
 DATA_ROOT = REPO_ROOT / "data" / "gigahands"
 GIGAHANDS_ROOT = DATA_ROOT / "gigahands_demo_all"
 ANNOTATIONS_DIR = DATA_ROOT / "annotations"
@@ -104,6 +105,7 @@ POSE_PATH = (
 )
 
 GT_STEPS_PATH = ANNOTATIONS_DIR / f"gt_steps_{SEQ_NAME}.json"
+PRED_RAW_CLIPS_PATH = ANNOTATIONS_DIR / f"pred_raw_clips_{SEQ_NAME}.json"
 PRED_STEPS_PATH = ANNOTATIONS_DIR / f"pred_steps_{SEQ_NAME}.json"
 
 
@@ -152,6 +154,50 @@ def load_mesh(path: Path):
     return vertices, faces
 
 
+def extract_step_text(value):
+    if isinstance(value, dict):
+        if "text" in value:
+            return str(value["text"])
+        if "label" in value:
+            return str(value["label"])
+        return json.dumps(value, ensure_ascii=False)
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return stripped
+            return extract_step_text(parsed)
+        return stripped
+
+    return str(value)
+
+
+def extract_embedded_step_fields(value):
+    if isinstance(value, dict):
+        return {
+            "label": extract_step_text(value.get("label", "")),
+            "text": extract_step_text(value.get("text", "")),
+        }
+
+    if not isinstance(value, str):
+        return {"label": "", "text": extract_step_text(value)}
+
+    stripped = value.strip()
+    label_match = re.search(r'"label"\s*:\s*"([^"]+)', stripped)
+    text_match = re.search(r'"text"\s*:\s*"([^"]+)', stripped, flags=re.DOTALL)
+
+    embedded_label = label_match.group(1).strip() if label_match else ""
+    embedded_text = text_match.group(1).strip() if text_match else ""
+
+    return {
+        "label": embedded_label,
+        "text": embedded_text,
+    }
+
+
 def load_steps(path: Path):
     if not path.exists():
         raise FileNotFoundError(f"Step file not found: {path}")
@@ -170,17 +216,26 @@ def load_steps(path: Path):
 
         step["start"] = int(step["start"])
         step["end"] = int(step["end"])
-        step["label"] = str(step.get("label", step["text"]))
-        step["text"] = str(step["text"])
+        embedded = extract_embedded_step_fields(step["text"])
+        step["label"] = extract_step_text(step.get("label", step["text"]))
+        step["text"] = extract_step_text(step["text"])
+        step["_embedded_label"] = embedded["label"]
+        step["_embedded_text"] = embedded["text"]
 
         if "sub_task" in step:
-            step["sub_task"] = str(step["sub_task"])
+            step["sub_task"] = extract_step_text(step["sub_task"])
         if "interaction" in step:
-            step["interaction"] = str(step["interaction"])
+            step["interaction"] = extract_step_text(step["interaction"])
         if "objects" in step and not isinstance(step["objects"], list):
             step["objects"] = [str(step["objects"])]
 
     return data
+
+
+def load_optional_steps(path: Path):
+    if not path.exists():
+        return []
+    return load_steps(path)
 
 
 # =========================
@@ -411,7 +466,7 @@ def normalize_object_name(name: str) -> list[str]:
     if name in special_map:
         return special_map[name]
 
-    drop_tokens = {"with", "and", "transform", "mesh"}
+    drop_tokens = {"with", "and", "transform", "mesh", "object", "objects"}
     tokens = [t for t in tokens if t not in drop_tokens]
 
     if not tokens:
@@ -468,49 +523,68 @@ def build_frame_info(frame_idx: int, step, seq_name: str, scene_registry, poses)
     if step is None:
         return {
             "sub_task": "No active sub task",
-            "action_label": "None",
+            "interaction": "None",
             "action_text": "No active action",
-            "interaction": "No interaction",
             "objects": get_active_objects_for_frame(frame_idx, scene_registry, poses),
         }
 
+    fallback_label = str(step.get("_embedded_label", "")).strip()
+    fallback_text = str(step.get("_embedded_text", "")).strip()
+
+    main_task = str(step.get("main_task", infer_main_task(seq_name))).strip()
+    if not main_task:
+        main_task = infer_main_task(seq_name)
+
+    sub_task = str(step.get("sub_task", step.get("label", "unknown"))).strip()
+    interaction = str(step.get("interaction", step.get("label", "unknown"))).strip()
+    action_text = str(step.get("current_action", step.get("text", ""))).strip()
+
+    if sub_task.lower() == "other" and fallback_label:
+        sub_task = fallback_label
+    if interaction.lower() == "other" and fallback_label:
+        interaction = fallback_label
+    if (
+        action_text.startswith("{")
+        or action_text.startswith("```")
+        or action_text.lower() == "other"
+    ) and fallback_text:
+        action_text = fallback_text
+
     return {
-        "sub_task": str(step.get("sub_task", step.get("label", "unknown"))),
-        "action_label": str(step.get("label", "unknown")),
-        "action_text": str(step.get("text", "")),
-        "interaction": str(step.get("interaction", step.get("text", ""))),
+        "main_task": main_task,
+        "sub_task": sub_task,
+        "action_text": action_text,
+        "interaction": interaction,
         "objects": infer_objects(frame_idx, seq_name, step, scene_registry, poses),
     }
 
 
-def log_caption_panels(base: str, seq_name: str, frame_info):
+def log_caption_panels(base: str, seq_name: str, frame_info, progress: float):
     rr.log(
         f"{base}/captions/Main_Task",
-        rr.TextDocument(infer_main_task(seq_name)),
-    )
-
-    rr.log(
-        f"{base}/captions/Sub_Task",
-        rr.TextDocument(f"Sub Task\n{frame_info['sub_task']}"),
-    )
-
-    rr.log(
-        f"{base}/captions/Current_Action",
         rr.TextDocument(
-            "Current Action\n"
-            f"Label: {frame_info['action_label']}\n"
-            f"{frame_info['action_text']}"
+            f"{frame_info['main_task']}\n\nProgress: {progress * 100:.1f}%"
         ),
     )
 
     rr.log(
-        f"{base}/captions/details/interaction",
-        rr.TextDocument(f"Interaction\n{frame_info['interaction']}"),
+        f"{base}/captions/Sub_Task",
+        rr.TextDocument(frame_info["sub_task"]),
     )
 
-    objects_text = "Objects"
-    if frame_info["objects"]:
-        objects_text += "\n" + "\n".join(f"- {obj}" for obj in frame_info["objects"])
+    rr.log(
+        f"{base}/captions/Current_Action",
+        rr.TextDocument(frame_info["action_text"]),
+    )
+
+    rr.log(
+        f"{base}/captions/details/interaction",
+        rr.TextDocument(frame_info["interaction"]),
+    )
+
+    objects_text = "\n".join(f"- {obj}" for obj in frame_info["objects"])
+    if not objects_text:
+        objects_text = "None"
 
     rr.log(
         f"{base}/captions/details/objects",
@@ -523,34 +597,62 @@ def log_caption_panels(base: str, seq_name: str, frame_info):
 # =========================
 
 def log_timeline_series(base: str, steps, name: str):
-    for i, step in enumerate(steps):
-        rr.log(
-            f"{base}/timeline/{name}/step_{i + 1:02d}",
-            rr.TextDocument(
-                f"{name.upper()} Step {i + 1}\n"
-                f"Frames: {step['start']} - {step['end']}\n"
-                f"Label: {step['label']}\n"
-                f"Text: {step['text']}"
-            ),
-        )
+    del name
+
+    def get_task_color(idx: int):
+        colors = [
+            [255, 50, 50], [50, 255, 50], [50, 50, 255], [255, 255, 50], [50, 255, 255],
+            [255, 50, 255], [255, 128, 0], [128, 0, 128], [0, 128, 0], [0, 0, 128],
+            [128, 128, 0], [128, 0, 0], [0, 128, 128],
+        ]
+        return colors[idx % len(colors)]
+
+    runs = []
+    for step in steps:
+        task_name = step["label"]
+        start_f = int(step["start"])
+        end_f = int(step["end"])
+        if runs and runs[-1]["task"] == task_name:
+            runs[-1]["end"] = max(runs[-1]["end"], end_f)
+        else:
+            runs.append({"task": task_name, "start": start_f, "end": end_f})
+
+    labeled_tasks = set()
+    for run_idx, run in enumerate(runs):
+        entity_path = f"{base}/timeline/run_{run_idx:03d}/line_0"
+        label = ""
+        if run["task"] not in labeled_tasks:
+            label = run["task"]
+            labeled_tasks.add(run["task"])
+        try:
+            rr.log(
+                entity_path,
+                rr.SeriesLines(colors=get_task_color(run_idx), widths=4, names=label),
+                static=True,
+            )
+        except TypeError:
+            rr.log(
+                entity_path,
+                rr.SeriesLines(colors=get_task_color(run_idx), widths=4, names=label),
+            )
+
+    return runs
 
 
-def log_timeline_state(base: str, frame_idx: int, gt_step, pred_step):
-    gt_active = 1.0 if gt_step is not None else 0.0
-    pred_active = 1.0 if pred_step is not None else 0.0
+def compute_progress(frame_idx: int, total_frames: int) -> float:
+    if total_frames <= 1:
+        return 1.0
+    return frame_idx / float(total_frames - 1)
 
-    rr.log(f"{base}/timeline/gt_active", rr.Scalars(gt_active))
-    rr.log(f"{base}/timeline/pred_active", rr.Scalars(pred_active))
 
-    if gt_step is not None:
-        rr.log(f"{base}/timeline/gt_step_index", rr.Scalars(float(gt_step["start"])))
-    else:
-        rr.log(f"{base}/timeline/gt_step_index", rr.Scalars(-1.0))
+def log_timeline_state(base: str, frame_idx: int, total_frames: int, timeline_runs):
+    progress = compute_progress(frame_idx, total_frames)
+    rr.log(f"{base}/timeline/progress", rr.Scalars(progress))
 
-    if pred_step is not None:
-        rr.log(f"{base}/timeline/pred_step_index", rr.Scalars(float(pred_step["start"])))
-    else:
-        rr.log(f"{base}/timeline/pred_step_index", rr.Scalars(-1.0))
+    for run_idx, run in enumerate(timeline_runs):
+        entity_path = f"{base}/timeline/run_{run_idx:03d}/line_0"
+        if run["start"] <= frame_idx <= run["end"]:
+            rr.log(entity_path, rr.Scalars(0.0))
 
 
 # =========================
@@ -582,11 +684,6 @@ def create_blueprint():
                     origin="scene_gigahands/timeline",
                     name="Task Timeline",
                 ),
-                rrb.Vertical(
-                    rrb.TextDocumentView(origin="scene_gigahands/eval/gt_current_step", name="GT Current Step"),
-                    rrb.TextDocumentView(origin="scene_gigahands/eval/pred_current_step", name="Pred Current Step"),
-                    rrb.TextDocumentView(origin="scene_gigahands/eval/compare", name="GT vs Pred Compare"),
-                ),
             ),
         ),
         collapse_panels=True,
@@ -598,7 +695,7 @@ def create_blueprint():
 # =========================
 
 def main():
-    print("Loading GigaHands Ropedia-style evaluation scene...")
+    print("Loading GigaHands evaluation scene with Ropedia-style semantic panels...")
 
     required_paths = [
         VIDEO_PATH,
@@ -608,7 +705,6 @@ def main():
         RIGHT_3D_PATH,
         MESH_PATH,
         POSE_PATH,
-        GT_STEPS_PATH,
         PRED_STEPS_PATH,
     ]
     for p in required_paths:
@@ -620,7 +716,8 @@ def main():
     left_3d = load_3d(LEFT_3D_PATH)
     right_3d = load_3d(RIGHT_3D_PATH)
     mesh_vertices, mesh_faces = load_mesh(MESH_PATH)
-    gt_steps = load_steps(GT_STEPS_PATH)
+    gt_steps = load_optional_steps(GT_STEPS_PATH)
+    pred_raw_clips = load_optional_steps(PRED_RAW_CLIPS_PATH)
     pred_steps = load_steps(PRED_STEPS_PATH)
 
     with open(POSE_PATH, "r", encoding="utf-8") as f:
@@ -633,19 +730,20 @@ def main():
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {VIDEO_PATH}")
 
-    rr.init("gigahands_ropedia", spawn=True)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total_frames <= 0:
+        total_frames = max(len(left_2d), len(right_2d), len(left_3d), len(right_3d), 1)
+
+    rr.init("gigahands_eval_test", spawn=True)
     rr.send_blueprint(create_blueprint())
 
     base = SCENE_NAME
 
     log_step_summary(base, "gt_steps_summary", gt_steps)
+    if pred_raw_clips:
+        log_step_summary(base, "pred_raw_clips_summary", pred_raw_clips)
     log_step_summary(base, "pred_steps_summary", pred_steps)
-    log_timeline_series(base, gt_steps, "gt")
-    log_timeline_series(base, pred_steps, "pred")
-
-    last_gt_idx = object()
-    last_pred_idx = object()
-    last_compare_key = object()
+    timeline_runs = log_timeline_series(base, pred_steps, "pred")
 
     frame_idx = 0
     try:
@@ -725,36 +823,15 @@ def main():
                     ),
                 )
 
-            # GT vs Pred current step
             gt_idx, gt_step = get_current_step(frame_idx, gt_steps)
+            pred_raw_idx, pred_raw_step = get_current_step(frame_idx, pred_raw_clips)
             pred_idx, pred_step = get_current_step(frame_idx, pred_steps)
 
-            # Ropedia-style semantic panels from pred step
-            frame_info = build_frame_info(frame_idx, pred_step, SEQ_NAME, scene_registry, poses)
-            log_caption_panels(base, SEQ_NAME, frame_info)
-            log_timeline_state(base, frame_idx, gt_step, pred_step)
-
-            if gt_idx != last_gt_idx:
-                rr.log(
-                    f"{base}/eval/gt_current_step",
-                    rr.TextDocument(format_step_text("GT", gt_idx, gt_step)),
-                )
-                last_gt_idx = gt_idx
-
-            if pred_idx != last_pred_idx:
-                rr.log(
-                    f"{base}/eval/pred_current_step",
-                    rr.TextDocument(format_step_text("Pred", pred_idx, pred_step)),
-                )
-                last_pred_idx = pred_idx
-
-            compare_key = (gt_idx, pred_idx)
-            if compare_key != last_compare_key:
-                rr.log(
-                    f"{base}/eval/compare",
-                    rr.TextDocument(format_compare_text(gt_idx, gt_step, pred_idx, pred_step)),
-                )
-                last_compare_key = compare_key
+            progress = compute_progress(frame_idx, total_frames)
+            semantic_step = pred_raw_step if pred_raw_step is not None else pred_step
+            frame_info = build_frame_info(frame_idx, semantic_step, SEQ_NAME, scene_registry, poses)
+            log_caption_panels(base, SEQ_NAME, frame_info, progress)
+            log_timeline_state(base, frame_idx, total_frames, timeline_runs)
 
             frame_idx += 1
 

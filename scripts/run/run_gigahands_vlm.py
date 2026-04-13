@@ -20,7 +20,7 @@ from qwen_vl_utils import process_vision_info
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
-REPO_ROOT = BASE_DIR.parent
+REPO_ROOT = BASE_DIR.parents[1]
 DATA_ROOT = REPO_ROOT / "data" / "gigahands"
 GIGAHANDS_ROOT = DATA_ROOT / "gigahands_demo_all"
 

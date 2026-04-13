@@ -25,7 +25,7 @@ USE_SMOOTHER = True
 SMOOTH_WINDOW = 1
 
 BASE_DIR = Path(__file__).resolve().parent
-REPO_ROOT = BASE_DIR.parent
+REPO_ROOT = BASE_DIR.parents[2]
 DATA_ROOT = REPO_ROOT / "data" / "gigahands"
 GIGAHANDS_ROOT = DATA_ROOT / "gigahands_demo_all"
 ANNOTATIONS_DIR = DATA_ROOT / "annotations"
@@ -365,9 +365,97 @@ def infer_main_task(seq_name: str) -> str:
     return "Hand-object manipulation"
 
 
+def discover_scene_objects(seq_name: str) -> list[str]:
+    pose_dir = (
+        GIGAHANDS_ROOT
+        / "object_pose"
+        / seq_name
+        / "pose"
+    )
+
+    if not pose_dir.exists():
+        return []
+
+    object_names = []
+    for p in pose_dir.iterdir():
+        if p.suffix.lower() in {".obj", ".ply", ".glb", ".stl"}:
+            object_names.append(p.stem)
+
+    return sorted(set(object_names))
+
+
+def normalize_object_name(name: str) -> list[str]:
+    name = name.lower().replace("-", "_").strip()
+
+    banned_exact = {
+        "transform",
+        "mesh",
+        "transform_mesh",
+        "object",
+        "world",
+        "camera",
+        "scene",
+    }
+    if name in banned_exact:
+        return []
+
+    tokens = [t for t in name.split("_") if t]
+    banned_tokens = {"transform", "mesh", "world", "camera", "scene"}
+    if tokens and all(t in banned_tokens for t in tokens):
+        return []
+
+    special_map = {
+        "teapot_with_lid": ["teapot", "lid"],
+        "boxing_bag_stand": ["boxing bag", "stand"],
+    }
+    if name in special_map:
+        return special_map[name]
+
+    drop_tokens = {"with", "and", "transform", "mesh"}
+    tokens = [t for t in tokens if t not in drop_tokens]
+
+    if not tokens:
+        return []
+
+    return [" ".join(tokens)]
+
+
+def build_scene_object_registry(seq_name: str):
+    raw_names = discover_scene_objects(seq_name)
+
+    registry = []
+    for raw in raw_names:
+        labels = normalize_object_name(raw)
+        if not labels:
+            continue
+        registry.append({
+            "raw_name": raw,
+            "labels": labels,
+        })
+
+    return registry
+
+
+def get_active_objects_for_frame(frame_idx: int, registry, poses) -> list[str]:
+    pose_key = f"{frame_idx:06d}"
+    if pose_key not in poses:
+        return []
+
+    active = []
+    for item in registry:
+        active.extend(item["labels"])
+
+    return sorted(set(active))
+
+
 def infer_objects(frame_idx: int, seq_name: str, step, scene_registry, poses) -> list[str]:
     if step is not None and "objects" in step and isinstance(step["objects"], list):
-        return [str(x) for x in step["objects"]]
+        filtered = []
+        for obj in step["objects"]:
+            filtered.extend(normalize_object_name(str(obj)))
+        filtered = sorted(set(filtered))
+        if filtered:
+            return filtered
 
     active = get_active_objects_for_frame(frame_idx, scene_registry, poses)
     if active:
@@ -393,6 +481,7 @@ def build_frame_info(frame_idx: int, step, seq_name: str, scene_registry, poses)
         "interaction": str(step.get("interaction", step.get("text", ""))),
         "objects": infer_objects(frame_idx, seq_name, step, scene_registry, poses),
     }
+
 
 def log_caption_panels(base: str, seq_name: str, frame_info):
     rr.log(
@@ -503,62 +592,7 @@ def create_blueprint():
         collapse_panels=True,
     )
 
-def discover_scene_objects(seq_name: str):
-    pose_dir = (
-        GIGAHANDS_ROOT
-        / "object_pose"
-        / seq_name
-        / "pose"
-    )
 
-    if not pose_dir.exists():
-        return []
-
-    object_names = []
-    for p in pose_dir.iterdir():
-        if p.suffix.lower() in {".obj", ".ply", ".glb", ".stl"}:
-            object_names.append(p.stem)
-
-    return sorted(set(object_names))
-
-def normalize_object_name(name: str):
-    name = name.lower().replace("-", "_")
-
-    special_map = {
-        "teapot_with_lid": ["teapot", "lid"],
-        "boxing_bag_stand": ["boxing bag", "stand"],
-    }
-
-    if name in special_map:
-        return special_map[name]
-
-    parts = [x for x in name.split("_") if x not in {"with", "and"}]
-    joined = " ".join(parts).strip()
-    return [joined] if joined else []
-
-def build_scene_object_registry(seq_name: str):
-    raw_names = discover_scene_objects(seq_name)
-
-    registry = []
-    for raw in raw_names:
-        labels = normalize_object_name(raw)
-        registry.append({
-            "raw_name": raw,
-            "labels": labels,
-        })
-
-    return registry
-
-def get_active_objects_for_frame(frame_idx: int, registry, poses):
-    pose_key = f"{frame_idx:06d}"
-    if pose_key not in poses:
-        return []
-
-    active = []
-    for item in registry:
-        active.extend(item["labels"])
-
-    return sorted(set(active))
 # =========================
 # Main
 # =========================
@@ -592,7 +626,6 @@ def main():
     with open(POSE_PATH, "r", encoding="utf-8") as f:
         raw_poses = json.load(f)
     poses = interpolate_poses(raw_poses)
-
     scene_registry = build_scene_object_registry(SEQ_NAME)
     print("Scene objects:", scene_registry)
 

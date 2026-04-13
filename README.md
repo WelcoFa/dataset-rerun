@@ -49,26 +49,26 @@ Dataset trees:
 ## Layout
 
 ```text
-scripts/   visualization entrypoints
+scripts/   organized entrypoints by role (`serve/`, `run/`, `visualize/`, `experimental/`, `tools/`)
 docs/      install guide, overview, CLI docs, and local docs viewer
 data/      dataset payloads, ignored by git
 ```
 
 ## Public Scripts
 
-- `scripts/visualize_beingh0_subset.py`
-- `scripts/visualize_dexwild_preview.py`
-- `scripts/visualize_gigahands_single_scene.py`
-- `scripts/visualize_hot3d_scene.py`
-- `scripts/visualize_hot3d_mano.py`
-- `scripts/visualize_hot3d_mano_albedo.py`
-- `scripts/visualize_hot3d_skeleton.py`
+- `scripts/visualize/visualize_beingh0_subset.py`
+- `scripts/visualize/visualize_dexwild_preview.py`
+- `scripts/visualize/visualize_gigahands_single_scene.py`
+- `scripts/visualize/visualize_hot3d_scene.py`
+- `scripts/visualize/visualize_hot3d_mano.py`
+- `scripts/visualize/visualize_hot3d_mano_albedo.py`
+- `scripts/visualize/visualize_hot3d_skeleton.py`
 
 ## Universal Dashboard
 
 The repo now also includes a shared multi-dataset dashboard entrypoint:
 
-- `scripts/visualize_universal_dashboard.py`
+- `scripts/visualize/visualize_universal_dashboard.py`
 
 It opens a common Rerun layout with:
 
@@ -88,11 +88,11 @@ Supported datasets:
 Example commands:
 
 ```powershell
-uv run python scripts/visualize_universal_dashboard.py --dataset gigahands
-uv run python scripts/visualize_universal_dashboard.py --dataset hot3d --sequence-name P0001_10a27bf7
-uv run python scripts/visualize_universal_dashboard.py --dataset being-h0 --beingh0-max-samples 200
-uv run python scripts/visualize_universal_dashboard.py --dataset dexwild --dexwild-episode ep_0000
-uv run python scripts/visualize_universal_dashboard.py --dataset thermohands --thermohands-scene-dir data/thermohands/cut_paper
+uv run python scripts/visualize/visualize_universal_dashboard.py --dataset gigahands
+uv run python scripts/visualize/visualize_universal_dashboard.py --dataset hot3d --sequence-name P0001_10a27bf7
+uv run python scripts/visualize/visualize_universal_dashboard.py --dataset being-h0 --beingh0-max-samples 200
+uv run python scripts/visualize/visualize_universal_dashboard.py --dataset dexwild --dexwild-episode ep_0000
+uv run python scripts/visualize/visualize_universal_dashboard.py --dataset thermohands --thermohands-scene-dir data/thermohands/cut_paper
 ```
 
 Useful dataset-specific flags include:
@@ -120,7 +120,7 @@ It gives you:
 Start the dashboard app directly with `uv`:
 
 ```powershell
-uv run python scripts/serve_dashboard_app.py --app-port 8080 --viewer-port 9090 --grpc-port 9876
+uv run python scripts/serve/serve_dashboard_app.py --app-port 8080 --viewer-port 9090 --grpc-port 9876
 ```
 
 Open:
@@ -136,7 +136,7 @@ By default the app reads:
 You can override those paths:
 
 ```powershell
-uv run python scripts/serve_dashboard_app.py --config-dir .\configs --outputs-dir .\outputs
+uv run python scripts/serve/serve_dashboard_app.py --config-dir .\configs --outputs-dir .\outputs
 ```
 
 ### Run With Docker
@@ -185,9 +185,9 @@ Static assets are served from:
 
 The current GigaHands workflow has three layers:
 
-- `scripts/visualize_gigahands_single_scene.py` for scene inspection with RGB, 2D hands, 3D hands, and object pose
-- `scripts/run_gigahands_vlm.py` for clip-level semantic prediction with fields such as `sub_task`, `interaction`, `objects`, `label`, and `current_action`
-- `scripts/visualize_gigahands_eval_test.py` for a ROPedia-style semantic viewer that reads generated annotation JSONs and shows:
+- `scripts/visualize/visualize_gigahands_single_scene.py` for scene inspection with RGB, 2D hands, 3D hands, and object pose
+- `scripts/run/run_gigahands_vlm.py` for clip-level semantic prediction with fields such as `sub_task`, `interaction`, `objects`, `label`, and `current_action`
+- `scripts/visualize/visualize_gigahands_eval_test.py` for a ROPedia-style semantic viewer that reads generated annotation JSONs and shows:
   - `Main Task`
   - `Sub Task`
   - `Interaction`
@@ -240,5 +240,5 @@ uv sync --extra hot3d-mano
 
 - The repo defaults to relative paths under `data/`.
 - The maintained public scripts also support absolute dataset roots through CLI options such as `--data-root`, which is useful when your payloads live on a local NAS.
-- Some moved GigaHands variants are still present in `scripts/`, but they should be treated as experimental until their CLIs are normalized the same way as the public entrypoints.
+- Experimental or legacy scripts now live under `scripts/experimental/`, while inspection helpers live under `scripts/tools/`.
 - The GigaHands evaluation viewer currently expects annotation-style semantic JSONs rather than running object detection online inside the viewer.

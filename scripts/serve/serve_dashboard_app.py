@@ -20,7 +20,7 @@ import time
 from typing import Any
 from urllib.parse import parse_qs, quote, urlparse
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -28,7 +28,7 @@ from rerun_viz.config.loader import load_config_file
 
 
 APP_UI_DIR = REPO_ROOT / "app_ui"
-SERVE_SCRIPT = REPO_ROOT / "scripts" / "serve_rerun_dashboard.py"
+SERVE_SCRIPT = REPO_ROOT / "scripts" / "serve" / "serve_rerun_dashboard.py"
 
 
 @dataclass

@@ -7,7 +7,7 @@ import rerun as rr
 import trimesh
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 SEQUENCE_NAME = "P0001_10a27bf7"
 
 SEQUENCE_DIR = ROOT / SEQUENCE_NAME

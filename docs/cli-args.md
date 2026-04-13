@@ -84,13 +84,13 @@ Visualize a HOT3D sequence with a lightweight skeleton layout.
 
 ## Experimental Scripts
 
-The following scripts were moved into `scripts/` but still need CLI normalization before they are treated as stable public entrypoints:
+The following scripts are kept under `scripts/experimental/` or `scripts/tools/` until their CLIs are normalized and documented as stable entrypoints:
 
-- `visualize_gigahands_multi_scene.py`
-- `visualize_gigahands_eval.py`
+- `experimental/gigahands/visualize_gigahands_multi_scene.py`
+- `experimental/gigahands/visualize_gigahands_eval.py`
 - `visualize_gigahands_eval_test.py`
-- `visualize_gigahands_vlm.py`
-- `visualize_gigahands_ropedia.py`
-- `visualize_gigahands_ropedia_test.py`
+- `experimental/gigahands/visualize_gigahands_vlm.py`
+- `experimental/gigahands/visualize_gigahands_ropedia.py`
+- `experimental/gigahands/visualize_gigahands_ropedia_test.py`
 - `run_gigahands_vlm.py`
-- `inspect_gigahands_tree.py`
+- `tools/inspect_gigahands_tree.py`

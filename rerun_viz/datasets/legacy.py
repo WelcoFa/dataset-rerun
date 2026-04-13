@@ -13,8 +13,10 @@ from rerun_viz.registry.detectors import detect_with_legacy_plus
 def _ensure_scripts_on_path():
     repo_root = Path(__file__).resolve().parents[2]
     scripts_dir = repo_root / "scripts"
-    if str(scripts_dir) not in sys.path:
-        sys.path.insert(0, str(scripts_dir))
+    visualize_dir = scripts_dir / "visualize"
+    for path in (scripts_dir, visualize_dir):
+        if str(path) not in sys.path:
+            sys.path.insert(0, str(path))
 
 
 class LegacyUniversalAdapter(DatasetAdapter):
