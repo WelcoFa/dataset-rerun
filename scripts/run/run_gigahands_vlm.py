@@ -11,8 +11,7 @@ import cv2
 import numpy as np
 import torch
 from PIL import Image
-from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
-from qwen_vl_utils import process_vision_info
+from transformers import AutoProcessor
 
 
 # ============================================================
@@ -588,6 +587,13 @@ def get_torch_dtype() -> torch.dtype:
 
 
 def load_model_and_processor(model_id: str):
+    try:
+        from transformers import Qwen2_5_VLForConditionalGeneration
+    except ImportError as exc:  # pragma: no cover - import guard
+        raise ImportError(
+            "Qwen VLM inference requires transformers with `Qwen2_5_VLForConditionalGeneration` support."
+        ) from exc
+
     print(f"Loading model: {model_id}")
     print("cuda available:", torch.cuda.is_available())
     if torch.cuda.is_available():
@@ -651,6 +657,14 @@ def run_qwen_batch(
     scene_name: str,
     scene_registry: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Tuple[str, Dict[str, Any]]]:
+    try:
+        from qwen_vl_utils import process_vision_info
+    except ImportError as exc:  # pragma: no cover - import guard
+        raise ImportError(
+            "Qwen VLM inference requires `qwen-vl-utils` and its vision dependencies. "
+            "Install the VLM extras first with `uv sync --extra gigahands-vlm`."
+        ) from exc
+
     messages_list = [build_messages_for_clip(clip, scene_name) for clip in batch_clips]
 
     texts = [

@@ -18,18 +18,21 @@ dependencies = [
 [project.optional-dependencies]
 gigahands-vlm = [
   "torch>=2.3",
+  "torchvision>=0.18",
   "transformers>=4.44",
   "Pillow>=10.4",
   "qwen-vl-utils>=0.0.8",
 ]
 wiyh-vlm = [
   "torch>=2.3",
+  "torchvision>=0.18",
   "transformers>=4.44",
   "Pillow>=10.4",
   "qwen-vl-utils>=0.0.8",
 ]
 multidataset-vlm = [
   "torch>=2.3",
+  "torchvision>=0.18",
   "transformers>=4.44",
   "Pillow>=10.4",
   "qwen-vl-utils>=0.0.8",
