@@ -39,6 +39,7 @@ MODEL_ID = os.environ.get("GIGAHANDS_GEMMA4_MODEL_ID", "google/gemma-4-E4B-it")
 OUTPUT_TAG = os.environ.get("GIGAHANDS_GEMMA4_OUTPUT_TAG", "gemma4")
 OUTPUT_STEPS_PATH = base.OUTPUT_DIR / f"pred_steps_{base.SCENE_NAME}_{OUTPUT_TAG}.json"
 OUTPUT_RAW_CLIPS_PATH = base.OUTPUT_DIR / f"pred_raw_clips_{base.SCENE_NAME}_{OUTPUT_TAG}.json"
+OUTPUT_RUN_META_PATH = base.OUTPUT_DIR / f"pred_run_meta_{base.SCENE_NAME}_{OUTPUT_TAG}.json"
 BATCH_SIZE = int(os.environ.get("GIGAHANDS_GEMMA4_BATCH_SIZE", "1"))
 MAX_NEW_TOKENS = int(os.environ.get("GIGAHANDS_GEMMA4_MAX_NEW_TOKENS", str(base.MAX_NEW_TOKENS)))
 USE_SDPA = os.environ.get("GIGAHANDS_GEMMA4_USE_SDPA", "1") != "0"
@@ -133,15 +134,6 @@ def run_gemma_batch(
         outputs.append((decoded, parsed))
 
     return outputs
-
-
-def maybe_print_vram_stats() -> None:
-    if not torch.cuda.is_available():
-        return
-    peak_allocated = torch.cuda.max_memory_allocated() / (1024 ** 3)
-    peak_reserved = torch.cuda.max_memory_reserved() / (1024 ** 3)
-    print(f"Peak VRAM allocated: {peak_allocated:.2f} GiB")
-    print(f"Peak VRAM reserved : {peak_reserved:.2f} GiB")
 
 
 def main() -> None:
@@ -246,14 +238,30 @@ def main() -> None:
         json.dump(merged_steps, f, ensure_ascii=False, indent=2)
 
     total_dt = time.time() - total_start
+    run_meta = base.save_run_meta(
+        model_id=MODEL_ID,
+        batch_size=effective_batch_size,
+        total_time_seconds=total_dt,
+        total_frames=total_frames,
+        fps=fps,
+        num_clips=len(clips),
+        output_path=OUTPUT_RUN_META_PATH,
+        raw_output_path=OUTPUT_RAW_CLIPS_PATH,
+        steps_output_path=OUTPUT_STEPS_PATH,
+        runner_name="run_gigahands_gemma4_vlm",
+    )
 
     print("Saved raw clip predictions to:")
     print(" ", OUTPUT_RAW_CLIPS_PATH)
     print("Saved merged step predictions to:")
     print(" ", OUTPUT_STEPS_PATH)
+    print("Saved run metadata to:")
+    print(" ", OUTPUT_RUN_META_PATH)
     print()
     print(f"Total inference time: {total_dt:.2f}s")
-    maybe_print_vram_stats()
+    if run_meta["peak_vram_allocated_gib"] is not None:
+        print(f"Peak VRAM allocated: {run_meta['peak_vram_allocated_gib']:.2f} GiB")
+        print(f"Peak VRAM reserved : {run_meta['peak_vram_reserved_gib']:.2f} GiB")
     print()
 
     print("Merged steps preview:")

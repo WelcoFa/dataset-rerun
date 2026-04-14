@@ -41,6 +41,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 OUTPUT_STEPS_PATH = OUTPUT_DIR / f"pred_steps_{SCENE_NAME}.json"
 OUTPUT_RAW_CLIPS_PATH = OUTPUT_DIR / f"pred_raw_clips_{SCENE_NAME}.json"
+OUTPUT_RUN_META_PATH = OUTPUT_DIR / f"pred_run_meta_{SCENE_NAME}.json"
 
 MODEL_ID = os.environ.get("GIGAHANDS_VLM_MODEL_ID", "Qwen/Qwen2.5-VL-3B-Instruct")
 
@@ -48,7 +49,7 @@ MODEL_ID = os.environ.get("GIGAHANDS_VLM_MODEL_ID", "Qwen/Qwen2.5-VL-3B-Instruct
 CLIP_LEN_FRAMES = 64
 CLIP_STRIDE_FRAMES = 64
 NUM_SAMPLED_FRAMES = int(os.environ.get("GIGAHANDS_NUM_SAMPLED_FRAMES", "3"))
-BATCH_SIZE = int(os.environ.get("GIGAHANDS_BATCH_SIZE", "2"))
+BATCH_SIZE = int(os.environ.get("GIGAHANDS_BATCH_SIZE", "1"))
 
 # 只输出短 JSON
 MAX_NEW_TOKENS = int(os.environ.get("GIGAHANDS_MAX_NEW_TOKENS", "96"))
@@ -797,6 +798,72 @@ def merge_clip_predictions(raw_clip_preds: List[Dict[str, Any]]) -> List[Dict[st
     return merged
 
 
+def get_device_name() -> str:
+    if torch.cuda.is_available():
+        return torch.cuda.get_device_name(0)
+    return "cpu"
+
+
+def get_dtype_name(dtype: torch.dtype) -> str:
+    return str(dtype).replace("torch.", "")
+
+
+def get_peak_vram_stats() -> dict[str, float | None]:
+    if not torch.cuda.is_available():
+        return {
+            "peak_vram_allocated_gib": None,
+            "peak_vram_reserved_gib": None,
+        }
+    return {
+        "peak_vram_allocated_gib": round(torch.cuda.max_memory_allocated() / (1024 ** 3), 4),
+        "peak_vram_reserved_gib": round(torch.cuda.max_memory_reserved() / (1024 ** 3), 4),
+    }
+
+
+def save_run_meta(
+    *,
+    model_id: str,
+    batch_size: int,
+    total_time_seconds: float,
+    total_frames: int,
+    fps: float,
+    num_clips: int,
+    output_path: Path,
+    raw_output_path: Path,
+    steps_output_path: Path,
+    runner_name: str,
+) -> dict[str, Any]:
+    meta: dict[str, Any] = {
+        "runner_name": runner_name,
+        "model_id": model_id,
+        "scene_name": SCENE_NAME,
+        "video_path": str(VIDEO_PATH),
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "device_name": get_device_name(),
+        "torch_dtype": get_dtype_name(get_torch_dtype()),
+        "batch_size": batch_size,
+        "clip_len_frames": CLIP_LEN_FRAMES,
+        "clip_stride_frames": CLIP_STRIDE_FRAMES,
+        "num_sampled_frames": NUM_SAMPLED_FRAMES,
+        "max_new_tokens": MAX_NEW_TOKENS,
+        "max_image_edge": MAX_IMAGE_EDGE,
+        "do_sample": DO_SAMPLE,
+        "temperature": TEMPERATURE,
+        "top_p": TOP_P,
+        "use_flash_attn": USE_FLASH_ATTN,
+        "total_frames": total_frames,
+        "fps": round(fps, 4),
+        "num_clips": num_clips,
+        "total_time_seconds": round(total_time_seconds, 4),
+        "raw_output_path": str(raw_output_path),
+        "steps_output_path": str(steps_output_path),
+    }
+    meta.update(get_peak_vram_stats())
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    return meta
+
+
 # ============================================================
 # Main
 # ============================================================
@@ -837,6 +904,10 @@ def main():
     scene_registry = build_scene_object_registry(SCENE_NAME)
     print("Scene objects =", get_scene_object_labels(scene_registry))
 
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+
     model, processor = load_model_and_processor(MODEL_ID)
 
     raw_clip_preds: List[Dict[str, Any]] = []
@@ -874,6 +945,7 @@ def main():
                 "text": parsed["text"],
                 "parse_ok": parsed.get("parse_ok", False),
                 "raw_response": raw_text,
+                "model_id": MODEL_ID,
             }
             raw_clip_preds.append(item)
 
@@ -898,13 +970,30 @@ def main():
         json.dump(merged_steps, f, ensure_ascii=False, indent=2)
 
     total_dt = time.time() - total_start
+    run_meta = save_run_meta(
+        model_id=MODEL_ID,
+        batch_size=effective_batch_size,
+        total_time_seconds=total_dt,
+        total_frames=total_frames,
+        fps=fps,
+        num_clips=len(clips),
+        output_path=OUTPUT_RUN_META_PATH,
+        raw_output_path=OUTPUT_RAW_CLIPS_PATH,
+        steps_output_path=OUTPUT_STEPS_PATH,
+        runner_name="run_gigahands_vlm",
+    )
 
     print("Saved raw clip predictions to:")
     print(" ", OUTPUT_RAW_CLIPS_PATH)
     print("Saved merged step predictions to:")
     print(" ", OUTPUT_STEPS_PATH)
+    print("Saved run metadata to:")
+    print(" ", OUTPUT_RUN_META_PATH)
     print()
     print(f"Total inference time: {total_dt:.2f}s")
+    if run_meta["peak_vram_allocated_gib"] is not None:
+        print(f"Peak VRAM allocated: {run_meta['peak_vram_allocated_gib']:.2f} GiB")
+        print(f"Peak VRAM reserved : {run_meta['peak_vram_reserved_gib']:.2f} GiB")
     print()
 
     print("Merged steps preview:")
