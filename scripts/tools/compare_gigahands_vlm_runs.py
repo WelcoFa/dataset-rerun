@@ -117,14 +117,11 @@ def normalize_object_name(value: str) -> str:
 def label_vocab_from_library(library: dict[str, Any] | None) -> set[str]:
     if library is None:
         return set(CANONICAL_LABELS)
-    label_index = library.get("label_index", {})
-    if isinstance(label_index, dict) and label_index:
-        return {label_library_lib.normalize_label_text(label) for label in label_index.keys() if label_library_lib.normalize_label_text(label)}
     labels: set[str] = set()
     for entry in library.get("labels", []):
         if not isinstance(entry, dict):
             continue
-        label = label_library_lib.normalize_label_text(entry.get("label", ""))
+        label = label_library_lib.normalize_label_text(entry.get("name", ""))
         if label:
             labels.add(label)
         for alias in entry.get("aliases", []):
@@ -204,6 +201,32 @@ def round_or_none(value: float | None, digits: int = 4) -> float | None:
     return round(value, digits)
 
 
+def _coerce_int(value: Any) -> int | None:
+    if value in {None, ""}:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def clip_bounds(item: dict[str, Any]) -> tuple[int | None, int | None]:
+    start = _coerce_int(item.get("start"))
+    end = _coerce_int(item.get("end"))
+    if start is None:
+        start = _coerce_int(item.get("start_frame"))
+    if end is None:
+        end = _coerce_int(item.get("end_frame"))
+    return start, end
+
+
+def clip_duration_frames(item: dict[str, Any]) -> int | None:
+    start, end = clip_bounds(item)
+    if start is None or end is None or end < start:
+        return None
+    return end - start + 1
+
+
 def summarize_run(
     raw_clips: list[dict[str, Any]],
     steps: list[dict[str, Any]],
@@ -266,11 +289,12 @@ def summarize_run(
             for key in keys
         }
 
-    step_durations = [int(step["end"]) - int(step["start"]) + 1 for step in steps]
+    step_durations = [duration for step in steps if (duration := clip_duration_frames(step)) is not None]
     step_labels = Counter(str(step.get("label", "unknown")) for step in steps)
     sec_per_clip = None
-    if run_meta.get("num_clips"):
-        sec_per_clip = float(run_meta.get("total_time_seconds", 0.0)) / float(run_meta["num_clips"])
+    total_time_seconds = run_meta.get("total_time_seconds")
+    if run_meta.get("num_clips") and total_time_seconds not in {None, ""}:
+        sec_per_clip = float(total_time_seconds) / float(run_meta["num_clips"])
 
     comparison = {
         "model_id": run_meta.get("model_id"),

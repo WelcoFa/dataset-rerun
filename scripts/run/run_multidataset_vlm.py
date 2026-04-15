@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import csv
 import json
@@ -9,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-import h5py
 import numpy as np
 import torch
 from PIL import Image
@@ -21,6 +22,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from rerun_viz.core import read_image_rgb_unicode_safe
+from rerun_viz.config.loader import load_config_file
+import universal_label_library as label_library_lib
 
 
 DATA_ROOT = REPO_ROOT / "data"
@@ -29,6 +32,13 @@ MAX_NEW_TOKENS = int(os.environ.get("MULTIDATASET_MAX_NEW_TOKENS", "128"))
 MAX_IMAGE_EDGE = int(os.environ.get("MULTIDATASET_MAX_IMAGE_EDGE", "448"))
 BATCH_SIZE = int(os.environ.get("MULTIDATASET_BATCH_SIZE", "1"))
 DEFAULT_NUM_SAMPLED_FRAMES = int(os.environ.get("MULTIDATASET_NUM_SAMPLED_FRAMES", "3"))
+OUTPUT_TAG = os.environ.get("MULTIDATASET_OUTPUT_TAG", "").strip()
+LABEL_LIBRARY_PATH = Path(
+    os.environ.get("MULTIDATASET_LABEL_LIBRARY_PATH", str(REPO_ROOT / "data" / "universal_label_library.json"))
+)
+LABEL_LIBRARY_AUTO_APPEND = os.environ.get("MULTIDATASET_LABEL_LIBRARY_AUTO_APPEND", "1") != "0"
+LABEL_LIBRARY_SIMILARITY_THRESHOLD = float(os.environ.get("MULTIDATASET_LABEL_LIBRARY_SIMILARITY_THRESHOLD", "0.86"))
+LABEL_LIBRARY_MAX_PROMPT_LABELS = int(os.environ.get("MULTIDATASET_LABEL_LIBRARY_MAX_PROMPT_LABELS", "24"))
 
 CANONICAL_LABELS = [
     "approach",
@@ -57,10 +67,12 @@ class ClipInfo:
     sampled_images: List[Image.Image]
     prompt_context: Dict[str, Any]
     output_dir: Path
+    output_tag: str = ""
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Universal VLM semantic extractor for datasets under data/.")
+    parser.add_argument("--config", type=Path, default=None, help="Optional config file under configs/ to seed dataset/input/selection.")
     parser.add_argument("--input", type=Path, default=DATA_ROOT, help="Dataset root, item root, or the full data/ directory.")
     parser.add_argument(
         "--dataset",
@@ -71,6 +83,9 @@ def parse_args():
     parser.add_argument("--list-jobs", action="store_true", help="Only show detected jobs.")
     parser.add_argument("--max-jobs", type=int, default=-1, help="Limit the number of detected jobs.")
     parser.add_argument("--max-clips", type=int, default=-1, help="Limit the number of clips per job.")
+    parser.add_argument("--source-id", type=str, default="", help="Only run a specific source/scene/subset/action/episode.")
+    parser.add_argument("--num-sampled-frames", type=int, default=DEFAULT_NUM_SAMPLED_FRAMES, help="Frames to sample per clip.")
+    parser.add_argument("--output-tag", type=str, default=OUTPUT_TAG, help="Optional suffix for output files, e.g. gemma4.")
     return parser.parse_args()
 
 
@@ -100,6 +115,17 @@ def load_csv(path: Path) -> list[dict[str, Any]]:
         return list(csv.DictReader(f))
 
 
+def require_h5py():
+    try:
+        import h5py  # type: ignore
+    except ImportError as exc:
+        raise ImportError(
+            "This dataset path requires `h5py`, but it is not installed in the current environment. "
+            "Install the required extras before running the multidataset VLM script."
+        ) from exc
+    return h5py
+
+
 def linspace_int(start: int, end: int, n: int) -> List[int]:
     if n <= 1:
         return [start]
@@ -116,6 +142,50 @@ def linspace_int(start: int, end: int, n: int) -> List[int]:
             out.append(value)
             seen.add(value)
     return out
+
+
+def resolve_input_path(value: Any) -> Path:
+    raw = str(value)
+    normalized = raw.replace("\\", "/")
+    if normalized == "/data":
+        return DATA_ROOT
+    if normalized.startswith("/data/"):
+        return (DATA_ROOT / normalized.removeprefix("/data/")).resolve()
+    path = Path(raw)
+    if path.is_absolute():
+        return path
+    return (REPO_ROOT / path).resolve()
+
+
+def load_config_payload(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {}
+    return load_config_file(path)
+
+
+def normalize_dataset_name(value: str) -> str:
+    lowered = str(value or "").strip().lower()
+    return "wiyh" if lowered == "wyih" else lowered
+
+
+def tagged_output_path(output_dir: Path, stem: str, output_tag: str) -> Path:
+    suffix = f"_{output_tag}" if output_tag else ""
+    return output_dir / f"{stem}{suffix}.json"
+
+
+def sample_video_window(video_path: Path, *, start_frame: int, end_frame: int, num_sampled_frames: int) -> tuple[List[int], List[Image.Image]]:
+    import cv2
+
+    sampled_indices = linspace_int(start_frame, end_frame, num_sampled_frames)
+    sampled_images: List[Image.Image] = []
+    cap = cv2.VideoCapture(str(video_path))
+    for frame_idx in sampled_indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ok, frame = cap.read()
+        if ok and frame is not None:
+            sampled_images.append(pil_from_rgb_array(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+    cap.release()
+    return sampled_indices, sampled_images
 
 
 def resize_image(image: Image.Image) -> Image.Image:
@@ -141,25 +211,14 @@ def pil_from_image_path(path: Path) -> Image.Image:
     return resize_image(Image.fromarray(read_image_rgb_unicode_safe(path)))
 
 
-def normalize_label(label: str) -> str:
-    x = (label or "").strip().lower()
-    if x in CANONICAL_LABELS:
-        return x
-    rules = [
-        (["reach", "approach"], "approach"),
-        (["touch", "contact"], "touch"),
-        (["grasp", "grab", "pick up"], "grasp"),
-        (["hold", "holding"], "hold"),
-        (["lift", "raise"], "lift"),
-        (["move", "pull", "push", "carry"], "move"),
-        (["place", "set down", "put down"], "place"),
-        (["release", "let go"], "release"),
-        (["manipulate", "adjust", "open", "close", "rotate", "pour"], "manipulate"),
-    ]
-    for keys, target in rules:
-        if any(key in x for key in keys):
-            return target
-    return "other"
+def normalize_label(label: str, label_library: Optional[dict[str, Any]] = None) -> tuple[str, dict[str, Any]]:
+    resolved = label_library_lib.resolve_label(
+        label,
+        label_library,
+        auto_append_new_labels=False,
+        similarity_threshold=LABEL_LIBRARY_SIMILARITY_THRESHOLD,
+    )
+    return str(resolved["resolved_label"]), resolved
 
 
 def extract_json_block(text: str) -> Optional[str]:
@@ -173,13 +232,17 @@ def extract_json_block(text: str) -> Optional[str]:
     return None
 
 
-def parse_response(raw_text: str, fallback_main_task: str) -> Dict[str, Any]:
+def parse_response(raw_text: str, fallback_main_task: str, label_library: Optional[dict[str, Any]] = None) -> Dict[str, Any]:
     result = {
         "main_task": fallback_main_task,
         "sub_task": "other",
         "interaction": "other",
         "objects": [],
         "label": "other",
+        "raw_label": "",
+        "label_match_kind": None,
+        "label_match_score": None,
+        "label_id": None,
         "current_action": "other",
         "parse_ok": False,
     }
@@ -200,7 +263,12 @@ def parse_response(raw_text: str, fallback_main_task: str) -> Dict[str, Any]:
     result["sub_task"] = str(parsed.get("sub_task", "other")).strip() or "other"
     result["interaction"] = str(parsed.get("interaction", "other")).strip() or "other"
     result["current_action"] = str(parsed.get("current_action", "other")).strip() or "other"
-    result["label"] = normalize_label(str(parsed.get("label", "other")))
+    resolved_label, label_resolution = normalize_label(str(parsed.get("label", "other")), label_library=label_library)
+    result["label"] = resolved_label
+    result["raw_label"] = label_resolution.get("raw_label_normalized", label_resolution.get("raw_label", ""))
+    result["label_match_kind"] = label_resolution.get("match_kind")
+    result["label_match_score"] = label_resolution.get("match_score")
+    result["label_id"] = label_resolution.get("label_id")
     objects = parsed.get("objects", [])
     if isinstance(objects, list):
         result["objects"] = [str(item).strip() for item in objects if str(item).strip()]
@@ -220,13 +288,13 @@ def normalize_object_name(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip().lower())
 
 
-def evaluate_validity(item: Dict[str, Any]) -> Dict[str, Any]:
+def evaluate_validity(item: Dict[str, Any], *, label_vocab: set[str]) -> Dict[str, Any]:
     objects = item.get("objects", [])
     normalized_objects = [normalize_object_name(obj) for obj in objects if normalize_object_name(obj)]
     unique_objects = list(dict.fromkeys(normalized_objects))
     checks = {
         "parse_ok": bool(item.get("parse_ok", False)),
-        "label_in_vocab": item.get("label") in CANONICAL_LABELS,
+        "label_in_vocab": item.get("label") in label_vocab,
         "main_task_ok": is_meaningful_text(item.get("main_task", ""), min_words=3),
         "sub_task_ok": is_meaningful_text(item.get("sub_task", ""), min_words=2),
         "interaction_ok": is_meaningful_text(item.get("interaction", ""), min_words=3),
@@ -310,7 +378,12 @@ def choose_overall_task(dataset: str, context: Dict[str, Any]) -> str:
 
 
 def make_prompt(clip: ClipInfo) -> str:
-    labels_text = ", ".join(CANONICAL_LABELS)
+    labels_text = label_library_lib.build_prompt_label_block(
+        clip.prompt_context.get("label_library"),
+        max_labels=LABEL_LIBRARY_MAX_PROMPT_LABELS,
+    )
+    if not labels_text:
+        labels_text = "\n".join(f"- {label}" for label in CANONICAL_LABELS)
     fallback_main_task = choose_overall_task(clip.dataset, clip.prompt_context)
     context_lines = [f"Dataset: {clip.dataset}", f"Source id: {clip.source_id}", f"Clip frame range: {clip.start_frame} to {clip.end_frame}"]
     for key, value in clip.prompt_context.items():
@@ -327,14 +400,16 @@ Context:
 Task:
 1. Treat the inputs as one short clip or short temporal segment.
 2. Return a concise dashboard-friendly semantic summary.
-3. Choose exactly ONE label from this closed vocabulary:
-   [{labels_text}]
+3. Choose exactly ONE label from the shared label library below.
+   Prefer an existing label over inventing a synonym.
+{labels_text}
 4. main_task should describe the overall task in one sentence.
 5. sub_task should name the current phase in 3 to 8 words.
 6. interaction should be one concise sentence describing hand-object, robot-object, or person-object roles.
 7. objects must be a JSON list of manipulated or task-relevant objects only.
 8. current_action should be one concise sentence describing what happens in this clip.
-9. If uncertain, choose the closest label. Use "other" only when no label fits.
+9. If uncertain, choose the closest existing label. Use "other" only when no label fits.
+10. If no existing label or alias fits the meaning, invent one short new label.
 
 Fallback overall task if unsure: {fallback_main_task}
 
@@ -396,11 +471,14 @@ def load_model():
     return processor, model
 
 
-def run_inference(clips: List[ClipInfo], processor, model) -> List[Dict[str, Any]]:
+def run_inference(clips: List[ClipInfo], processor, model, *, label_library: Optional[dict[str, Any]]) -> List[Dict[str, Any]]:
     raw_clip_preds: List[Dict[str, Any]] = []
+    label_vocab = set(label_library_lib.get_canonical_labels(label_library)) if label_library else set(CANONICAL_LABELS)
     total_batches = (len(clips) + BATCH_SIZE - 1) // BATCH_SIZE
     for batch_index in range(total_batches):
         batch = clips[batch_index * BATCH_SIZE : (batch_index + 1) * BATCH_SIZE]
+        for clip in batch:
+            clip.prompt_context["label_library"] = label_library
         batch_start = batch_index * BATCH_SIZE + 1
         batch_end = batch_index * BATCH_SIZE + len(batch)
         print(f"Running batch {batch_start}-{batch_end}/{len(clips)}")
@@ -418,23 +496,29 @@ def run_inference(clips: List[ClipInfo], processor, model) -> List[Dict[str, Any
         print(f"  batch_time = {dt:.2f}s")
         print(f"  avg_per_clip = {dt / len(batch):.2f}s")
         for clip, raw_text in zip(batch, outputs):
-            parsed = parse_response(raw_text, choose_overall_task(clip.dataset, clip.prompt_context))
+            parsed = parse_response(raw_text, choose_overall_task(clip.dataset, clip.prompt_context), label_library=label_library)
             item = {
                 "dataset": clip.dataset,
                 "source_id": clip.source_id,
                 "clip_id": clip.clip_id,
                 "start_frame": clip.start_frame,
                 "end_frame": clip.end_frame,
+                "sampled_frames": clip.sampled_frame_indices,
                 "main_task": parsed["main_task"],
                 "sub_task": parsed["sub_task"],
                 "interaction": parsed["interaction"],
                 "objects": parsed["objects"],
                 "label": parsed["label"],
+                "raw_label": parsed.get("raw_label", ""),
+                "label_match_kind": parsed.get("label_match_kind"),
+                "label_match_score": parsed.get("label_match_score"),
+                "label_id": parsed.get("label_id"),
                 "current_action": parsed["current_action"],
                 "parse_ok": parsed["parse_ok"],
+                "model_id": MODEL_ID,
                 "raw_response": raw_text.strip(),
             }
-            item["validity"] = evaluate_validity(item)
+            item["validity"] = evaluate_validity(item, label_vocab=label_vocab)
             raw_clip_preds.append(item)
             print(
                 f"  clip {clip.clip_id:04d} | "
@@ -452,6 +536,7 @@ def run_inference(clips: List[ClipInfo], processor, model) -> List[Dict[str, Any
 
 
 def detect_dataset(input_path: Path, requested_dataset: str) -> str:
+    requested_dataset = normalize_dataset_name(requested_dataset)
     if requested_dataset != "auto":
         return requested_dataset
     parts = {part.lower() for part in input_path.parts}
@@ -466,18 +551,46 @@ def detect_dataset(input_path: Path, requested_dataset: str) -> str:
         return "dexwild"
     if "thermohands" in parts or name == "thermohands":
         return "thermohands"
-    if "wyih" in parts or name == "wyih":
+    if "wyih" in parts or "wiyh" in parts or name in {"wyih", "wiyh"}:
         return "wiyh"
     raise ValueError(f"Could not auto-detect dataset from {input_path}")
 
 
-def build_gigahands_jobs(root: Path) -> List[ClipInfo]:
+def sample_video_frames(video_path: Path, *, clip_len: int, clip_stride: int, num_sampled_frames: int) -> List[tuple[int, int, List[int], List[Image.Image]]]:
+    import cv2
+
+    cap = cv2.VideoCapture(str(video_path))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    outputs: List[tuple[int, int, List[int], List[Image.Image]]] = []
+    for start_frame in range(0, max(total_frames - 1, 1), clip_stride):
+        end_frame = min(start_frame + clip_len - 1, total_frames - 1)
+        sampled_indices = linspace_int(start_frame, end_frame, num_sampled_frames)
+        sampled_images: List[Image.Image] = []
+        cap = cv2.VideoCapture(str(video_path))
+        for frame_idx in sampled_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, frame = cap.read()
+            if ok and frame is not None:
+                import cv2 as _cv2
+                sampled_images.append(pil_from_rgb_array(_cv2.cvtColor(frame, _cv2.COLOR_BGR2RGB)))
+        cap.release()
+        if sampled_images:
+            outputs.append((start_frame, end_frame, sampled_indices, sampled_images))
+        if end_frame >= total_frames - 1:
+            break
+    return outputs
+
+
+def build_gigahands_jobs(root: Path, *, source_filter: str = "", num_sampled_frames: int = DEFAULT_NUM_SAMPLED_FRAMES, output_tag: str = "") -> List[ClipInfo]:
     dataset_root = root / "gigahands_demo_all" if (root / "gigahands_demo_all").is_dir() else root
     annotations_dir = ensure_annotations_dir(root if root.name == "gigahands" else root.parent)
     hand_pose_root = dataset_root / "hand_pose"
     seq_dirs = sorted([p for p in hand_pose_root.iterdir() if p.is_dir()])
     clips: List[ClipInfo] = []
-    for seq_dir in seq_dirs[:1]:
+    for seq_dir in seq_dirs:
+        if source_filter and seq_dir.name != source_filter:
+            continue
         cam_dirs = sorted([p for p in (seq_dir / "rgb_vid").iterdir() if p.is_dir()])
         if not cam_dirs:
             continue
@@ -485,42 +598,29 @@ def build_gigahands_jobs(root: Path) -> List[ClipInfo]:
         if not video_files:
             continue
         video_path = video_files[0]
-        import cv2
-        cap = cv2.VideoCapture(str(video_path))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        cap.release()
-        clip_starts = list(range(0, max(total_frames - 1, 1), 64))
         source_id = seq_dir.name
         clip_id = 0
-        for start_frame in clip_starts:
-            end_frame = min(start_frame + 63, total_frames - 1)
-            sampled_indices = linspace_int(start_frame, end_frame, DEFAULT_NUM_SAMPLED_FRAMES)
-            cap = cv2.VideoCapture(str(video_path))
-            sampled_images: List[Image.Image] = []
-            for frame_idx in sampled_indices:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-                ok, frame = cap.read()
-                if ok and frame is not None:
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    sampled_images.append(pil_from_rgb_array(frame))
-            cap.release()
-            if sampled_images:
-                clips.append(
-                    ClipInfo(
-                        dataset="gigahands",
-                        source_id=source_id,
-                        clip_id=clip_id,
-                        start_frame=start_frame,
-                        end_frame=end_frame,
-                        sampled_frame_indices=sampled_indices,
-                        sampled_images=sampled_images,
-                        prompt_context={"scene_name": seq_dir.name, "camera_name": cam_dirs[0].name},
-                        output_dir=annotations_dir,
-                    )
+        for start_frame, end_frame, sampled_indices, sampled_images in sample_video_frames(
+            video_path,
+            clip_len=64,
+            clip_stride=64,
+            num_sampled_frames=num_sampled_frames,
+        ):
+            clips.append(
+                ClipInfo(
+                    dataset="gigahands",
+                    source_id=source_id,
+                    clip_id=clip_id,
+                    start_frame=start_frame,
+                    end_frame=end_frame,
+                    sampled_frame_indices=sampled_indices,
+                    sampled_images=sampled_images,
+                    prompt_context={"scene_name": seq_dir.name, "camera_name": cam_dirs[0].name},
+                    output_dir=annotations_dir,
+                    output_tag=output_tag,
                 )
-                clip_id += 1
-            if end_frame >= total_frames - 1:
-                break
+            )
+            clip_id += 1
     return clips
 
 
@@ -540,18 +640,20 @@ def extract_instruction(conversations) -> str:
     return clean_instruction(conversations[0].get("value", "")) if conversations and isinstance(conversations[0], dict) else ""
 
 
-def build_beingh0_jobs(root: Path) -> List[ClipInfo]:
+def build_beingh0_jobs(root: Path, *, source_filter: str = "", num_sampled_frames: int = DEFAULT_NUM_SAMPLED_FRAMES, output_tag: str = "") -> List[ClipInfo]:
     base = root / "h0_post_train_db_2508" if (root / "h0_post_train_db_2508").is_dir() else root
     subset_dirs = sorted([p for p in base.iterdir() if p.is_dir() and (p / "images").is_dir()])
     clips: List[ClipInfo] = []
     output_dir = ensure_annotations_dir(root if root.name == "Being-h0" else root.parent)
-    for subset_dir in subset_dirs[:1]:
+    for subset_dir in subset_dirs:
+        if source_filter and subset_dir.name != source_filter:
+            continue
         jsonl_path = sorted(subset_dir.glob("*_train.jsonl"))[0]
         samples = load_jsonl(jsonl_path)
         clip_id = 0
         for start in range(0, len(samples), 16):
             end = min(start + 15, len(samples) - 1)
-            sampled_indices = linspace_int(start, end, DEFAULT_NUM_SAMPLED_FRAMES)
+            sampled_indices = linspace_int(start, end, num_sampled_frames)
             sampled_images = []
             for idx in sampled_indices:
                 image_rel = samples[idx].get("image", "")
@@ -570,6 +672,7 @@ def build_beingh0_jobs(root: Path) -> List[ClipInfo]:
                         sampled_images=sampled_images,
                         prompt_context={"subset_name": subset_dir.name, "instruction": instruction},
                         output_dir=output_dir,
+                        output_tag=output_tag,
                     )
                 )
                 clip_id += 1
@@ -585,11 +688,12 @@ def read_h5_any(ds):
         return ds[()]
 
 
-def sorted_image_keys(group: h5py.Group) -> list[str]:
+def sorted_image_keys(group) -> list[str]:
     return sorted(group.keys(), key=lambda x: int(x.split(".")[0]))
 
 
-def build_dexwild_jobs(root: Path) -> List[ClipInfo]:
+def build_dexwild_jobs(root: Path, *, source_filter: str = "", num_sampled_frames: int = DEFAULT_NUM_SAMPLED_FRAMES, output_tag: str = "") -> List[ClipInfo]:
+    h5py = require_h5py()
     hdf5_files = sorted(root.glob("*.hdf5")) + sorted(root.glob("*.h5")) if root.is_dir() else [root]
     if not hdf5_files:
         return []
@@ -597,7 +701,9 @@ def build_dexwild_jobs(root: Path) -> List[ClipInfo]:
     clips: List[ClipInfo] = []
     with h5py.File(hdf5_files[0], "r") as f:
         episode_names = sorted(f.keys())
-        for episode_name in episode_names[:1]:
+        for episode_name in episode_names:
+            if source_filter and episode_name != source_filter:
+                continue
             ep = f[episode_name]
             thumb_group = ep["right_thumb_cam"]
             pinky_group = ep["right_pinky_cam"]
@@ -608,7 +714,7 @@ def build_dexwild_jobs(root: Path) -> List[ClipInfo]:
             clip_id = 0
             for start in range(0, n_frames, 16):
                 end = min(start + 15, n_frames - 1)
-                sampled_indices = linspace_int(start, end, DEFAULT_NUM_SAMPLED_FRAMES)
+                sampled_indices = linspace_int(start, end, num_sampled_frames)
                 sampled_images = []
                 for idx in sampled_indices:
                     sampled_images.append(pil_from_rgb_array(np.asarray(thumb_group[thumb_keys[idx]][:])))
@@ -625,17 +731,20 @@ def build_dexwild_jobs(root: Path) -> List[ClipInfo]:
                         sampled_images=sampled_images,
                         prompt_context={"episode": episode_name, "eef_xyz_start": xyz},
                         output_dir=output_dir,
+                        output_tag=output_tag,
                     )
                 )
                 clip_id += 1
     return clips
 
 
-def build_thermohands_jobs(root: Path) -> List[ClipInfo]:
+def build_thermohands_jobs(root: Path, *, source_filter: str = "", num_sampled_frames: int = DEFAULT_NUM_SAMPLED_FRAMES, output_tag: str = "") -> List[ClipInfo]:
     scene_dirs = [root] if (root / "rgb").is_dir() else sorted([p for p in root.iterdir() if p.is_dir() and (p / "rgb").is_dir()])
     output_dir = ensure_annotations_dir(root if root.name == "thermohands" else root.parent)
     clips: List[ClipInfo] = []
-    for scene_dir in scene_dirs[:1]:
+    for scene_dir in scene_dirs:
+        if source_filter and scene_dir.name != source_filter:
+            continue
         rgb_files = sorted((scene_dir / "rgb").glob("*.png"))
         thermal_files = sorted((scene_dir / "thermal").glob("*.png"))
         ir_files = sorted((scene_dir / "ir").glob("*.png"))
@@ -645,7 +754,7 @@ def build_thermohands_jobs(root: Path) -> List[ClipInfo]:
         clip_id = 0
         for start in range(0, n_frames, 16):
             end = min(start + 15, n_frames - 1)
-            sampled_indices = linspace_int(start, end, DEFAULT_NUM_SAMPLED_FRAMES)
+            sampled_indices = linspace_int(start, end, num_sampled_frames)
             sampled_images = []
             for idx in sampled_indices:
                 sampled_images.append(pil_from_image_path(rgb_files[idx]))
@@ -668,18 +777,22 @@ def build_thermohands_jobs(root: Path) -> List[ClipInfo]:
                         "right_hand_visible": "kps3D_R" in gt,
                     },
                     output_dir=output_dir,
+                    output_tag=output_tag,
                 )
             )
             clip_id += 1
     return clips
 
 
-def build_wiyh_jobs(root: Path) -> List[ClipInfo]:
+def build_wiyh_jobs(root: Path, *, source_filter: str = "", num_sampled_frames: int = DEFAULT_NUM_SAMPLED_FRAMES, output_tag: str = "") -> List[ClipInfo]:
+    h5py = require_h5py()
     action_dirs = [root] if (root / "dataset.hdf5").exists() else sorted([p for p in root.iterdir() if p.is_dir() and (p / "dataset.hdf5").exists()])
     task_json = root / "task.json" if root.is_dir() else root.parent / "task.json"
-    output_dir = ensure_annotations_dir(root if root.name == "wyih" else root.parent)
+    output_dir = ensure_annotations_dir(root if root.name in {"wyih", "wiyh"} else root.parent)
     clips: List[ClipInfo] = []
-    for action_dir in action_dirs[:1]:
+    for action_dir in action_dirs:
+        if source_filter and action_dir.name != source_filter:
+            continue
         task_entry = read_json(task_json) if task_json.exists() else []
         task_description = ""
         with h5py.File(action_dir / "dataset.hdf5", "r") as f:
@@ -692,7 +805,7 @@ def build_wiyh_jobs(root: Path) -> List[ClipInfo]:
         clip_id = 0
         for start in range(0, total_frames, 12):
             end = min(start + 11, total_frames - 1)
-            sampled_indices = linspace_int(start, end, DEFAULT_NUM_SAMPLED_FRAMES)
+            sampled_indices = linspace_int(start, end, num_sampled_frames)
             sampled_images = []
             for idx in sampled_indices:
                 for camera_name in camera_streams:
@@ -710,21 +823,25 @@ def build_wiyh_jobs(root: Path) -> List[ClipInfo]:
                     sampled_images=sampled_images,
                     prompt_context={"task_description": task_description, "action_name": action_dir.name},
                     output_dir=output_dir,
+                    output_tag=output_tag,
                 )
             )
             clip_id += 1
     return clips
 
 
-def build_hot3d_jobs(root: Path) -> List[ClipInfo]:
+def build_hot3d_jobs(root: Path, *, source_filter: str = "", num_sampled_frames: int = DEFAULT_NUM_SAMPLED_FRAMES, output_tag: str = "") -> List[ClipInfo]:
     hot3d_root = root / "hot3d_demo_full" if (root / "hot3d_demo_full").is_dir() else root
     seq_dirs = sorted([p for p in hot3d_root.iterdir() if p.is_dir() and (p / "ground_truth").is_dir() and (p / "hand_data").is_dir()])
     output_dir = ensure_annotations_dir(root if root.name == "HOT3D" else root.parent)
     clips: List[ClipInfo] = []
-    for seq_dir in seq_dirs[:1]:
+    for seq_dir in seq_dirs:
+        if source_filter and seq_dir.name != source_filter:
+            continue
         metadata_path = seq_dir / "ground_truth" / "metadata.json"
         dynamic_path = seq_dir / "ground_truth" / "dynamic_objects.csv"
         hand_path = seq_dir / "hand_data" / "mano_hand_pose_trajectory.jsonl"
+        preview_video_path = seq_dir / "preview_rgb.mp4"
         metadata = read_json(metadata_path)
         dynamic_rows = load_csv(dynamic_path)
         hand_rows = load_jsonl(hand_path)
@@ -737,8 +854,15 @@ def build_hot3d_jobs(root: Path) -> List[ClipInfo]:
         clip_id = 0
         for start in range(0, len(timestamps), 20):
             end = min(start + 19, len(timestamps) - 1)
-            sampled_indices = linspace_int(start, end, min(DEFAULT_NUM_SAMPLED_FRAMES, end - start + 1))
+            sampled_indices = linspace_int(start, end, min(num_sampled_frames, end - start + 1))
             sampled_images: List[Image.Image] = []
+            if preview_video_path.exists():
+                _, sampled_images = sample_video_window(
+                    preview_video_path,
+                    start_frame=start,
+                    end_frame=end,
+                    num_sampled_frames=len(sampled_indices),
+                )
             prompt_context = {
                 "sequence_name": seq_dir.name,
                 "recording_name": metadata.get("recording_name", "unknown"),
@@ -757,34 +881,35 @@ def build_hot3d_jobs(root: Path) -> List[ClipInfo]:
                     sampled_images=sampled_images,
                     prompt_context=prompt_context,
                     output_dir=output_dir,
+                    output_tag=output_tag,
                 )
             )
             clip_id += 1
     return clips
 
 
-def build_jobs(input_path: Path, dataset: str) -> List[ClipInfo]:
+def build_jobs(input_path: Path, dataset: str, *, source_filter: str = "", num_sampled_frames: int = DEFAULT_NUM_SAMPLED_FRAMES, output_tag: str = "") -> List[ClipInfo]:
     input_path = input_path.resolve()
     if input_path == DATA_ROOT:
         jobs: List[ClipInfo] = []
         for child in sorted([p for p in input_path.iterdir() if p.is_dir()]):
             ds = detect_dataset(child, "auto")
-            jobs.extend(build_jobs(child, ds))
+            jobs.extend(build_jobs(child, ds, source_filter=source_filter, num_sampled_frames=num_sampled_frames, output_tag=output_tag))
         return jobs
 
     dataset = detect_dataset(input_path, dataset)
     if dataset == "gigahands":
-        return build_gigahands_jobs(input_path)
+        return build_gigahands_jobs(input_path, source_filter=source_filter, num_sampled_frames=num_sampled_frames, output_tag=output_tag)
     if dataset == "being-h0":
-        return build_beingh0_jobs(input_path)
+        return build_beingh0_jobs(input_path, source_filter=source_filter, num_sampled_frames=num_sampled_frames, output_tag=output_tag)
     if dataset == "dexwild":
-        return build_dexwild_jobs(input_path)
+        return build_dexwild_jobs(input_path, source_filter=source_filter, num_sampled_frames=num_sampled_frames, output_tag=output_tag)
     if dataset == "thermohands":
-        return build_thermohands_jobs(input_path)
+        return build_thermohands_jobs(input_path, source_filter=source_filter, num_sampled_frames=num_sampled_frames, output_tag=output_tag)
     if dataset == "wiyh":
-        return build_wiyh_jobs(input_path)
+        return build_wiyh_jobs(input_path, source_filter=source_filter, num_sampled_frames=num_sampled_frames, output_tag=output_tag)
     if dataset == "hot3d":
-        return build_hot3d_jobs(input_path)
+        return build_hot3d_jobs(input_path, source_filter=source_filter, num_sampled_frames=num_sampled_frames, output_tag=output_tag)
     raise ValueError(f"Unsupported dataset: {dataset}")
 
 
@@ -796,13 +921,28 @@ def group_jobs_by_source(clips: Iterable[ClipInfo]) -> Dict[tuple[str, str, Path
     return grouped
 
 
-def save_outputs(grouped_preds: Dict[tuple[str, str, Path], List[Dict[str, Any]]]):
+def save_outputs(grouped_preds: Dict[tuple[str, str, Path], List[Dict[str, Any]]], *, label_library: Optional[dict[str, Any]], output_tag: str):
     for (dataset, source_id, output_dir), raw_clip_preds in grouped_preds.items():
-        raw_path = output_dir / f"pred_raw_clips_{source_id}.json"
-        steps_path = output_dir / f"pred_steps_{source_id}.json"
-        eval_path = output_dir / f"pred_eval_{source_id}.json"
+        raw_path = tagged_output_path(output_dir, f"pred_raw_clips_{source_id}", output_tag)
+        steps_path = tagged_output_path(output_dir, f"pred_steps_{source_id}", output_tag)
+        eval_path = tagged_output_path(output_dir, f"pred_eval_{source_id}", output_tag)
         merged_steps = merge_clips(raw_clip_preds)
         validity_summary = summarize_validity(raw_clip_preds)
+        for item in raw_clip_preds:
+            label_library_lib.record_observation(
+                label_library if label_library is not None else label_library_lib.default_label_library(),
+                raw_label=item.get("raw_label", ""),
+                canonical_label=item.get("label", "other"),
+                run_name="run_multidataset_vlm",
+                clip_id=item.get("clip_id"),
+                scene_name=item.get("source_id", source_id),
+                raw_response=item.get("raw_response", ""),
+                sub_task=item.get("sub_task", ""),
+                interaction=item.get("interaction", ""),
+                current_action=item.get("current_action", ""),
+                match_kind=item.get("label_match_kind"),
+                auto_append_new_labels=LABEL_LIBRARY_AUTO_APPEND,
+            )
         with open(raw_path, "w", encoding="utf-8") as f:
             json.dump(raw_clip_preds, f, ensure_ascii=False, indent=2)
         with open(steps_path, "w", encoding="utf-8") as f:
@@ -812,6 +952,10 @@ def save_outputs(grouped_preds: Dict[tuple[str, str, Path], List[Dict[str, Any]]
                 {
                     "dataset": dataset,
                     "source_id": source_id,
+                    "model_id": MODEL_ID,
+                    "output_tag": output_tag or None,
+                    "label_library_path": str(LABEL_LIBRARY_PATH),
+                    "label_library_summary": label_library_lib.summarize_library(label_library) if label_library is not None else None,
                     "summary": validity_summary,
                     "clips": [
                         {
@@ -842,7 +986,30 @@ def save_outputs(grouped_preds: Dict[tuple[str, str, Path], List[Dict[str, Any]]
 def main():
     args = parse_args()
     start_time = time.time()
-    clips = build_jobs(args.input, args.dataset)
+    payload = load_config_payload(args.config)
+    dataset = normalize_dataset_name(payload.get("dataset", args.dataset))
+    input_path = resolve_input_path(payload.get("input", args.input))
+    selection = dict(payload.get("selection", {})) if isinstance(payload.get("selection", {}), dict) else {}
+    dataset_options = dict(payload.get("dataset_options", {})) if isinstance(payload.get("dataset_options", {}), dict) else {}
+
+    source_filter = args.source_id.strip()
+    if not source_filter:
+        source_filter = (
+            str(selection.get("seq_name") or selection.get("sequence_name") or "")
+            or Path(str(dataset_options.get("thermohands_scene_dir", "") or "")).name
+            or str(dataset_options.get("dexwild_episode", "") or "")
+            or Path(str(dataset_options.get("action_dir", "") or "")).name
+            or Path(str(dataset_options.get("beingh0_subset_dir", "") or "")).name
+        )
+
+    label_library = label_library_lib.load_label_library(LABEL_LIBRARY_PATH)
+    clips = build_jobs(
+        input_path,
+        dataset,
+        source_filter=source_filter,
+        num_sampled_frames=max(1, args.num_sampled_frames),
+        output_tag=args.output_tag.strip(),
+    )
     if args.max_jobs > 0:
         grouped = list(group_jobs_by_source(clips).values())[: args.max_jobs]
         clips = [clip for group in grouped for clip in group]
@@ -853,6 +1020,8 @@ def main():
     print("Detected semantic jobs:")
     for (dataset, source_id, output_dir), items in grouped.items():
         print(f"  - dataset={dataset}, source_id={source_id}, clips={len(items)}, output_dir={output_dir}")
+    print("LABEL_LIBRARY      =", LABEL_LIBRARY_PATH)
+    print("LABEL_LIBRARY_ENTRIES =", label_library_lib.library_size(label_library))
 
     if args.list_jobs:
         return
@@ -861,14 +1030,16 @@ def main():
         raise RuntimeError("No clips found to process.")
 
     processor, model = load_model()
-    raw_preds = run_inference(clips, processor, model)
+    raw_preds = run_inference(clips, processor, model, label_library=label_library)
 
     preds_by_key: Dict[tuple[str, str, Path], List[Dict[str, Any]]] = {}
     for item in raw_preds:
         key = (item["dataset"], item["source_id"], next(clip.output_dir for clip in clips if clip.dataset == item["dataset"] and clip.source_id == item["source_id"]))
         preds_by_key.setdefault(key, []).append(item)
 
-    save_outputs(preds_by_key)
+    save_outputs(preds_by_key, label_library=label_library, output_tag=args.output_tag.strip())
+    if LABEL_LIBRARY_AUTO_APPEND:
+        label_library_lib.save_label_library(label_library, LABEL_LIBRARY_PATH)
     print(f"Total inference time: {time.time() - start_time:.2f}s")
 
 

@@ -25,10 +25,19 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from rerun_viz.config.loader import load_config_file
+from scripts.tools import compare_gigahands_vlm_runs as compare_tool
+import universal_label_library as label_library_lib
 
 
 APP_UI_DIR = REPO_ROOT / "app_ui"
 SERVE_SCRIPT = REPO_ROOT / "scripts" / "serve" / "serve_rerun_dashboard.py"
+RUN_GIGAHANDS_QWEN_SCRIPT = REPO_ROOT / "scripts" / "run" / "run_gigahands_vlm.py"
+RUN_GIGAHANDS_GEMMA_SCRIPT = REPO_ROOT / "scripts" / "run" / "run_gigahands_gemma4_vlm.py"
+RUN_MULTIDATASET_QWEN_SCRIPT = REPO_ROOT / "scripts" / "run" / "run_multidataset_vlm.py"
+RUN_MULTIDATASET_GEMMA_SCRIPT = REPO_ROOT / "scripts" / "run" / "run_multidataset_gemma4_vlm.py"
+UNIVERSAL_LABEL_LIBRARY_PATH = REPO_ROOT / "data" / "universal_label_library.json"
+GIGAHANDS_ANNOTATIONS_DIR = REPO_ROOT / "data" / "gigahands" / "annotations"
+ANNOTATION_RUN_SUPPORTED_DATASETS = {"gigahands", "hot3d", "being-h0", "dexwild", "thermohands", "wiyh"}
 
 
 @dataclass
@@ -95,13 +104,21 @@ class DashboardAppState:
         self.lock = threading.RLock()
         self.lifecycle_lock = threading.RLock()
         self.log_lines: deque[str] = deque(maxlen=300)
+        self.annotation_log_lines: deque[str] = deque(maxlen=400)
         self.process: subprocess.Popen[str] | None = None
+        self.annotation_process: subprocess.Popen[str] | None = None
         self.current_item_id: str | None = None
         self.current_scene_id: str | None = None
         self.current_recording: str | None = None
         self.status = "idle"
+        self.annotation_status = "idle"
         self.last_error: str | None = None
+        self.annotation_last_error: str | None = None
         self.started_at: str | None = None
+        self.annotation_started_at: str | None = None
+        self.annotation_runner: str | None = None
+        self.annotation_item_id: str | None = None
+        self.annotation_scene_id: str | None = None
         self.items = self._discover_items()
 
     def _is_port_in_use(self, port: int) -> bool:
@@ -788,6 +805,360 @@ class DashboardAppState:
             )
         return items
 
+    def _resolve_annotations_dir_for_item(self, item: PlayableItem) -> Path:
+        input_path = self._resolve_input_path(item.input_path)
+        if input_path is None:
+            raise ValueError(f"Item '{item.item_id}' has no input path configured")
+        if input_path.is_file():
+            return input_path.parent / "annotations"
+        direct = input_path / "annotations"
+        if direct.exists() or input_path.name.lower() in {"gigahands", "hot3d", "being-h0", "dexwild", "thermohands", "wyih", "wiyh"}:
+            return direct
+        return input_path.parent / "annotations"
+
+    def _annotation_source_id_for_scene(self, item: PlayableItem, scene: SceneOption) -> str:
+        if item.dataset.lower() == "gigahands":
+            return str(scene.selection.get("seq_name") or scene.scene_id)
+        return scene.scene_id
+
+    def _annotation_paths(self, annotations_dir: Path, source_id: str) -> dict[str, dict[str, Path]]:
+        return {
+            "qwen": {
+                "raw": annotations_dir / f"pred_raw_clips_{source_id}.json",
+                "steps": annotations_dir / f"pred_steps_{source_id}.json",
+                "meta": annotations_dir / f"pred_run_meta_{source_id}.json",
+                "eval": annotations_dir / f"pred_eval_{source_id}.json",
+            },
+            "gemma4": {
+                "raw": annotations_dir / f"pred_raw_clips_{source_id}_gemma4.json",
+                "steps": annotations_dir / f"pred_steps_{source_id}_gemma4.json",
+                "meta": annotations_dir / f"pred_run_meta_{source_id}_gemma4.json",
+                "eval": annotations_dir / f"pred_eval_{source_id}_gemma4.json",
+            },
+        }
+
+    def _scene_context_for_annotation(self, item_id: str, scene_id: str | None) -> tuple[PlayableItem, SceneOption]:
+        item = self._get_item(item_id)
+        if item is None:
+            raise ValueError(f"Unknown item: {item_id}")
+        if not item.valid:
+            raise ValueError(f"Config '{item_id}' is invalid: {item.error}")
+
+        scene = self._get_scene_for_item(item, scene_id)
+        if scene is None:
+            raise ValueError(f"Unknown scene '{scene_id}' for config '{item_id}'")
+        return item, scene
+
+    def _annotation_can_run(self, item: PlayableItem) -> bool:
+        return item.dataset.lower() in ANNOTATION_RUN_SUPPORTED_DATASETS
+
+    def _annotation_env(
+        self,
+        item: PlayableItem,
+        scene: SceneOption,
+        runner: str,
+        extra_env: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+
+        dataset_name = item.dataset.lower()
+        if dataset_name == "gigahands":
+            env["GIGAHANDS_LABEL_LIBRARY_PATH"] = str(UNIVERSAL_LABEL_LIBRARY_PATH)
+            env["MULTIDATASET_LABEL_LIBRARY_PATH"] = str(UNIVERSAL_LABEL_LIBRARY_PATH)
+            env["GIGAHANDS_SCENE_NAME"] = str(scene.selection["seq_name"])
+            env["GIGAHANDS_CAM_NAME"] = str(scene.selection["cam_name"])
+            env["GIGAHANDS_FRAME_ID"] = str(scene.selection["frame_id"])
+            if runner == "qwen":
+                env.setdefault("GIGAHANDS_BATCH_SIZE", "1")
+            if runner == "gemma4":
+                env.setdefault("GIGAHANDS_GEMMA4_BATCH_SIZE", "1")
+        else:
+            env["MULTIDATASET_LABEL_LIBRARY_PATH"] = str(UNIVERSAL_LABEL_LIBRARY_PATH)
+            env.setdefault("MULTIDATASET_BATCH_SIZE", "1")
+            env.setdefault("MULTIDATASET_GEMMA4_BATCH_SIZE", "1")
+
+        if extra_env:
+            env.update(extra_env)
+        return env
+
+    def _annotation_process_args(
+        self,
+        item: PlayableItem,
+        scene: SceneOption,
+        runner: str,
+    ) -> list[str]:
+        dataset_name = item.dataset.lower()
+        if dataset_name == "gigahands":
+            required = ("seq_name", "cam_name", "frame_id")
+            missing = [key for key in required if not str(scene.selection.get(key, "")).strip()]
+            if missing:
+                raise ValueError(
+                    f"Scene '{scene.scene_id}' is missing required gigahands selection keys: {', '.join(missing)}"
+                )
+            if runner == "qwen":
+                return [sys.executable, str(RUN_GIGAHANDS_QWEN_SCRIPT)]
+            if runner == "gemma4":
+                return [sys.executable, str(RUN_GIGAHANDS_GEMMA_SCRIPT)]
+            raise ValueError(f"Unsupported runner: {runner}")
+
+        source_id = self._annotation_source_id_for_scene(item, scene)
+        script_path = RUN_MULTIDATASET_QWEN_SCRIPT if runner == "qwen" else RUN_MULTIDATASET_GEMMA_SCRIPT if runner == "gemma4" else None
+        if script_path is None:
+            raise ValueError(f"Unsupported runner: {runner}")
+        return [
+            sys.executable,
+            str(script_path),
+            "--config",
+            str(item.path),
+            "--source-id",
+            source_id,
+        ]
+
+    def _annotation_runner_script_name(self, item: PlayableItem, runner: str) -> str:
+        dataset_name = item.dataset.lower()
+        if dataset_name == "gigahands":
+            if runner == "qwen":
+                return RUN_GIGAHANDS_QWEN_SCRIPT.name
+            if runner == "gemma4":
+                return RUN_GIGAHANDS_GEMMA_SCRIPT.name
+        else:
+            if runner == "qwen":
+                return RUN_MULTIDATASET_QWEN_SCRIPT.name
+            if runner == "gemma4":
+                return RUN_MULTIDATASET_GEMMA_SCRIPT.name
+        raise ValueError(f"Unsupported runner: {runner}")
+
+    def get_annotation_status(self) -> dict[str, Any]:
+        with self.lock:
+            return {
+                "status": self.annotation_status,
+                "runner": self.annotation_runner,
+                "item_id": self.annotation_item_id,
+                "scene_id": self.annotation_scene_id,
+                "started_at": self.annotation_started_at,
+                "process_running": self.annotation_process is not None and self.annotation_process.poll() is None,
+                "last_error": self.annotation_last_error,
+                "logs": list(self.annotation_log_lines),
+            }
+
+    def _append_annotation_log(self, line: str) -> None:
+        line = line.rstrip()
+        if not line:
+            return
+        with self.lock:
+            self.annotation_log_lines.append(line)
+        self.logger.info("[annotation] %s", line)
+
+    def _read_annotation_output(self, process: subprocess.Popen[str]) -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            self._append_annotation_log(line)
+
+    def _watch_annotation_process(self, process: subprocess.Popen[str], runner: str) -> None:
+        exit_code = process.wait()
+        with self.lock:
+            if self.annotation_process is process:
+                self.annotation_status = "completed" if exit_code == 0 else "failed"
+                if exit_code != 0 and self.annotation_last_error is None:
+                    self.annotation_last_error = f"Annotation process exited with code {exit_code}"
+                self.annotation_process = None
+        self._append_annotation_log(f"{runner} annotation process exited with code {exit_code}")
+
+    def stop_annotation(self) -> dict[str, Any]:
+        with self.lifecycle_lock:
+            with self.lock:
+                process = self.annotation_process
+            if process is None:
+                return self.get_annotation_status()
+
+            self._append_annotation_log("stopping current annotation process")
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self._append_annotation_log("annotation process did not stop in time; killing it")
+                process.kill()
+                process.wait(timeout=5)
+            finally:
+                with self.lock:
+                    if self.annotation_process is process:
+                        self.annotation_process = None
+                        self.annotation_status = "idle"
+                        self.annotation_last_error = None
+            return self.get_annotation_status()
+
+    def start_annotation(
+        self,
+        item_id: str,
+        *,
+        scene_id: str | None,
+        runner: str,
+        model_id: str | None = None,
+    ) -> dict[str, Any]:
+        with self.lifecycle_lock:
+            item, scene = self._scene_context_for_annotation(item_id, scene_id)
+            if not self._annotation_can_run(item):
+                raise ValueError(f"Automated annotation is not supported for dataset '{item.dataset}'")
+            self.stop_annotation()
+
+            extra_env: dict[str, str] = {}
+            if item.dataset.lower() == "gigahands":
+                if runner == "qwen" and model_id:
+                    extra_env["GIGAHANDS_VLM_MODEL_ID"] = model_id
+                if runner == "gemma4" and model_id:
+                    extra_env["GIGAHANDS_GEMMA4_MODEL_ID"] = model_id
+            else:
+                if runner == "qwen" and model_id:
+                    extra_env["MULTIDATASET_VLM_MODEL_ID"] = model_id
+                if runner == "gemma4" and model_id:
+                    extra_env["MULTIDATASET_GEMMA4_MODEL_ID"] = model_id
+
+            process_args = self._annotation_process_args(item, scene, runner)
+            process = subprocess.Popen(
+                process_args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=str(REPO_ROOT),
+                env=self._annotation_env(item, scene, runner, extra_env=extra_env),
+            )
+
+            with self.lock:
+                self.annotation_process = process
+                self.annotation_status = "running"
+                self.annotation_last_error = None
+                self.annotation_started_at = utc_now()
+                self.annotation_runner = runner
+                self.annotation_item_id = item.item_id
+                self.annotation_scene_id = scene.scene_id
+                self.annotation_log_lines.clear()
+
+        self._append_annotation_log(
+            f"starting {runner} annotation for '{item.label}' scene '{scene.label}' using {self._annotation_runner_script_name(item, runner)}"
+        )
+        threading.Thread(target=self._read_annotation_output, args=(process,), daemon=True).start()
+        threading.Thread(target=self._watch_annotation_process, args=(process, runner), daemon=True).start()
+        return self.get_annotation_status()
+
+    def _load_json_if_exists(self, path: Path) -> Any | None:
+        if not path.exists():
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _annotation_run_summary(
+        self,
+        raw_data: list[dict[str, Any]] | None,
+        steps_data: list[dict[str, Any]] | None,
+        meta_data: dict[str, Any] | None,
+        eval_data: dict[str, Any] | None,
+        *,
+        label_vocab: set[str],
+    ) -> dict[str, Any] | None:
+        if raw_data is None or steps_data is None:
+            return None
+        if meta_data is None:
+            num_clips = len(raw_data)
+            meta_data = {
+                "model_id": raw_data[0].get("model_id") if raw_data else None,
+                "runner_name": "run_multidataset_vlm",
+                "device": None,
+                "device_name": None,
+                "torch_dtype": None,
+                "batch_size": None,
+                "num_clips": num_clips,
+                "total_time_seconds": None,
+                "peak_vram_allocated_gib": None,
+                "peak_vram_reserved_gib": None,
+            }
+        summary = compare_tool.summarize_run(raw_data, steps_data, meta_data, label_vocab=label_vocab)
+        if eval_data and isinstance(eval_data, dict):
+            summary["validity_report"] = eval_data.get("summary")
+        return summary
+
+    def get_annotation_data(self, item_id: str, *, scene_id: str | None) -> dict[str, Any]:
+        item = self._get_item(item_id)
+        if item is None:
+            raise ValueError(f"Unknown item: {item_id}")
+        if not item.valid:
+            raise ValueError(f"Config '{item_id}' is invalid: {item.error}")
+        scene = self._get_scene_for_item(item, scene_id)
+        if scene is None:
+            raise ValueError(f"Unknown scene '{scene_id}' for config '{item_id}'")
+
+        source_id = self._annotation_source_id_for_scene(item, scene)
+        annotations_dir = self._resolve_annotations_dir_for_item(item)
+        paths = self._annotation_paths(annotations_dir, source_id)
+
+        library = label_library_lib.load_label_library(UNIVERSAL_LABEL_LIBRARY_PATH)
+        library_summary = label_library_lib.summarize_library(library)
+        library_evaluation = label_library_lib.recompute_library_evaluations(library)
+        label_vocab = compare_tool.label_vocab_from_library(library)
+
+        runs: dict[str, Any] = {}
+        loaded_runs: dict[str, dict[str, Any]] = {}
+        for runner, runner_paths in paths.items():
+            raw_data = self._load_json_if_exists(runner_paths["raw"])
+            steps_data = self._load_json_if_exists(runner_paths["steps"])
+            meta_data = self._load_json_if_exists(runner_paths["meta"])
+            eval_data = self._load_json_if_exists(runner_paths["eval"])
+            summary = self._annotation_run_summary(raw_data, steps_data, meta_data, eval_data, label_vocab=label_vocab)
+            available = raw_data is not None and steps_data is not None
+            runs[runner] = {
+                "available": available,
+                "paths": {key: str(value) for key, value in runner_paths.items()},
+                "summary": summary,
+                "raw_clip_count": len(raw_data) if isinstance(raw_data, list) else 0,
+                "step_count": len(steps_data) if isinstance(steps_data, list) else 0,
+                "meta": meta_data,
+                "eval": eval_data,
+                "recent_steps": (steps_data or [])[:6],
+            }
+            if available:
+                loaded_runs[runner] = {
+                    "raw": raw_data,
+                    "steps": steps_data,
+                    "meta": meta_data,
+                }
+
+        comparison = None
+        if "qwen" in loaded_runs and "gemma4" in loaded_runs:
+            comparison = {
+                "left_name": "Qwen",
+                "right_name": "Gemma 4",
+                "left_summary": compare_tool.summarize_run(
+                    loaded_runs["qwen"]["raw"],
+                    loaded_runs["qwen"]["steps"],
+                    loaded_runs["qwen"]["meta"],
+                    label_vocab=label_vocab,
+                ),
+                "right_summary": compare_tool.summarize_run(
+                    loaded_runs["gemma4"]["raw"],
+                    loaded_runs["gemma4"]["steps"],
+                    loaded_runs["gemma4"]["meta"],
+                    label_vocab=label_vocab,
+                ),
+            }
+
+        return {
+            "supported": True,
+            "item_id": item.item_id,
+            "item_label": item.label,
+            "scene_id": scene.scene_id,
+            "scene_label": scene.label,
+            "scene_name": source_id,
+            "dataset": item.dataset,
+            "can_run_automated": self._annotation_can_run(item),
+            "selection": scene.selection,
+            "annotations_dir": str(annotations_dir),
+            "library_path": str(UNIVERSAL_LABEL_LIBRARY_PATH),
+            "library_summary": library_summary,
+            "library_evaluation": library_evaluation,
+            "runs": runs,
+            "comparison": comparison,
+        }
+
     def get_status(self) -> dict[str, Any]:
         with self.lock:
             grpc_url = f"rerun+http://localhost:{self.grpc_port}/proxy"
@@ -990,6 +1361,18 @@ class DashboardAppHandler(BaseHTTPRequestHandler):
             if self.path == "/api/logs":
                 self._send_json({"logs": self.app_state.get_logs()})
                 return
+            if self.path.startswith("/api/annotation/status"):
+                self._send_json(self.app_state.get_annotation_status())
+                return
+            if self.path.startswith("/api/annotation/data?"):
+                query = parse_qs(urlparse(self.path).query)
+                item_id = query.get("item_id", [""])[0]
+                scene_id = query.get("scene_id", [""])[0] or None
+                if not item_id:
+                    self._send_json({"error": "item_id is required"}, status=400)
+                    return
+                self._send_json(self.app_state.get_annotation_data(item_id, scene_id=scene_id))
+                return
             if self.path.startswith("/api/download?"):
                 rel_path = parse_qs(urlparse(self.path).query).get("path", [None])[0]
                 if rel_path is None:
@@ -1032,6 +1415,42 @@ class DashboardAppHandler(BaseHTTPRequestHandler):
         if self.path == "/api/stop":
             self.app_state.stop_current()
             self._send_json(self.app_state.get_status())
+            return
+
+        if self.path == "/api/annotation/run":
+            item_id = str(payload.get("item_id", "")).strip()
+            if not item_id:
+                self._send_json({"error": "item_id is required"}, status=400)
+                return
+            scene_id = str(payload.get("scene_id", "")).strip() or None
+            runner = str(payload.get("runner", "qwen")).strip().lower() or "qwen"
+            model_id = str(payload.get("model_id", "")).strip() or None
+            try:
+                status = self.app_state.start_annotation(item_id, scene_id=scene_id, runner=runner, model_id=model_id)
+                self._send_json(status)
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
+        if self.path == "/api/annotation/stop":
+            self._send_json(self.app_state.stop_annotation())
+            return
+
+        if self.path == "/api/annotation/evaluate-library":
+            try:
+                library = label_library_lib.load_label_library(UNIVERSAL_LABEL_LIBRARY_PATH)
+                evaluation = label_library_lib.recompute_library_evaluations(library)
+                label_library_lib.save_label_library(library, UNIVERSAL_LABEL_LIBRARY_PATH)
+                self._send_json(
+                    {
+                        "ok": True,
+                        "library_path": str(UNIVERSAL_LABEL_LIBRARY_PATH),
+                        "summary": label_library_lib.summarize_library(library),
+                        "evaluation": evaluation,
+                    }
+                )
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=400)
             return
 
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")

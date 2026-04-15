@@ -323,6 +323,10 @@ p {
   background: linear-gradient(135deg, #10b981, #6ee7b7);
 }
 
+.nav-icon-annotation {
+  background: linear-gradient(135deg, #f59e0b, #f97316);
+}
+
 .nav-link-home.active,
 .nav-link-home:hover {
   background: rgba(59, 130, 246, 0.14);
@@ -339,6 +343,12 @@ p {
 .nav-link-viewer:hover {
   background: rgba(16, 185, 129, 0.14);
   color: #d1fae5;
+}
+
+.nav-link-annotation.active,
+.nav-link-annotation:hover {
+  background: rgba(245, 158, 11, 0.14);
+  color: #ffedd5;
 }
 
 .main-shell {
@@ -415,6 +425,291 @@ p {
   min-height: 36px;
   padding: 8px 12px;
   border-radius: 14px;
+}
+
+.annotation-page-shell {
+  display: grid;
+  gap: 18px;
+}
+
+.annotation-overview-panel {
+  padding: 22px 24px;
+  border-radius: 30px;
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.11), transparent 26%),
+    linear-gradient(135deg, rgba(17, 19, 31, 0.98), rgba(13, 15, 22, 0.95));
+}
+
+.annotation-overview-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.95fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.annotation-overview-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.annotation-overview-copy h3 {
+  font-size: clamp(1.9rem, 4vw, 3rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.annotation-overview-copy p {
+  max-width: 56ch;
+}
+
+.annotation-overview-context {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.annotation-context-item {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.annotation-context-item span,
+.annotation-stat-kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.72rem;
+  color: var(--muted-2);
+}
+
+.annotation-context-item strong,
+.annotation-context-item code {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.annotation-context-item-wide {
+  grid-column: 1 / -1;
+}
+
+.annotation-stat-strip {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.annotation-stat-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+  min-height: 0;
+}
+
+.annotation-stat-card-blue {
+  background: linear-gradient(135deg, rgba(24, 39, 76, 0.65), rgba(16, 20, 34, 0.5));
+  border-color: rgba(96, 165, 250, 0.22);
+}
+
+.annotation-stat-card-teal {
+  background: linear-gradient(135deg, rgba(17, 60, 51, 0.55), rgba(15, 23, 21, 0.5));
+  border-color: rgba(110, 231, 183, 0.2);
+}
+
+.annotation-stat-card-amber {
+  background: linear-gradient(135deg, rgba(73, 49, 23, 0.56), rgba(26, 20, 16, 0.48));
+  border-color: rgba(251, 191, 36, 0.2);
+}
+
+.annotation-stat-value {
+  font-size: clamp(1.4rem, 2vw, 2rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.annotation-stat-copy {
+  color: var(--muted);
+  line-height: 1.45;
+  max-width: 34ch;
+}
+
+.annotation-grid {
+  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.panel-span-full {
+  grid-column: 1 / -1;
+}
+
+.annotation-control-panel {
+  position: sticky;
+  top: 108px;
+}
+
+.annotation-artifact-panel {
+  min-height: 0;
+}
+
+.annotation-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.annotation-stop-btn {
+  grid-column: 1 / -1;
+}
+
+.annotation-run-grid,
+.annotation-chart-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.annotation-run-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.annotation-run-card,
+.annotation-chart-card,
+.annotation-library-row {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 16px 16px 15px;
+}
+
+.annotation-run-card-missing {
+  opacity: 0.75;
+}
+
+.annotation-run-header,
+.annotation-chart-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.annotation-run-header h4,
+.annotation-library-copy strong {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.annotation-chart-header span,
+.annotation-library-copy span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.annotation-run-stats {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.annotation-run-stats div {
+  display: grid;
+  gap: 4px;
+}
+
+.annotation-run-stats span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.annotation-run-stats strong {
+  font-size: 1rem;
+}
+
+.annotation-bar-row,
+.annotation-library-meter {
+  display: grid;
+  grid-template-columns: 84px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.annotation-bar-track {
+  position: relative;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.annotation-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.annotation-bar-fill-left {
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+}
+
+.annotation-bar-fill-right {
+  background: linear-gradient(90deg, #10b981, #34d399);
+}
+
+.annotation-library-row {
+  display: grid;
+  gap: 10px;
+}
+
+.annotation-library-row.needs-review {
+  border-color: rgba(245, 158, 11, 0.38);
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.annotation-library-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.annotation-library-metrics {
+  display: grid;
+  gap: 8px;
+}
+
+@media (max-width: 1120px) {
+  .annotation-overview-head,
+  .annotation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .annotation-control-panel {
+    position: static;
+  }
+
+  .annotation-stat-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .annotation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .annotation-action-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .annotation-stop-btn {
+    grid-column: auto;
+  }
 }
 
 .toggle-row {

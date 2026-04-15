@@ -98,6 +98,10 @@ def normalize_token(value: str) -> str:
     return text.strip()
 
 
+def normalize_label_text(value: str) -> str:
+    return normalize_token(value)
+
+
 def slugify_label_id(value: str) -> str:
     normalized = normalize_token(value)
     return normalized.replace(" ", "_")

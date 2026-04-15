@@ -31,6 +31,10 @@
             <span class="nav-icon nav-icon-viewer"></span>
             <span>Viewer</span>
           </a>
+          <a class="nav-link nav-link-annotation" href="#/annotation" data-route-link="annotation">
+            <span class="nav-icon nav-icon-annotation"></span>
+            <span>Annotation</span>
+          </a>
         </nav>
 
         <section class="rail-runtime">
@@ -352,6 +356,111 @@
             </section>
           </aside>
         </div>
+      </section>
+
+      <section id="page-annotation" class="route-page hidden">
+        <section class="annotation-page-shell">
+          <section class="panel annotation-overview-panel">
+            <div class="annotation-overview-head">
+              <div class="annotation-overview-copy">
+                <p class="panel-kicker">Annotation Workspace</p>
+                <h3 id="annotation-scene-name">none</h3>
+                <p id="annotation-scene-copy" class="muted">Select a GigaHands scene from Library to annotate.</p>
+              </div>
+              <div class="annotation-overview-context">
+                <div class="annotation-context-item">
+                  <span>Dataset</span>
+                  <strong id="annotation-selected-dataset">none</strong>
+                </div>
+                <div class="annotation-context-item">
+                  <span>Scene</span>
+                  <strong id="annotation-selected-scene">none</strong>
+                </div>
+                <div class="annotation-context-item annotation-context-item-wide">
+                  <span>Selection</span>
+                  <code id="annotation-selection-summary">Select a GigaHands scene first.</code>
+                </div>
+              </div>
+            </div>
+
+            <div class="annotation-stat-strip">
+              <article class="annotation-stat-card annotation-stat-card-blue">
+                <span class="annotation-stat-kicker">Runs Ready</span>
+                <strong id="annotation-runs-ready" class="annotation-stat-value">0</strong>
+                <p id="annotation-runs-copy" class="annotation-stat-copy">Qwen and Gemma outputs will appear here.</p>
+              </article>
+              <article class="annotation-stat-card annotation-stat-card-teal">
+                <span class="annotation-stat-kicker">Library Labels</span>
+                <strong id="annotation-library-count" class="annotation-stat-value">0</strong>
+                <p id="annotation-library-copy" class="annotation-stat-copy">Universal label library coverage and review state.</p>
+              </article>
+              <article class="annotation-stat-card annotation-stat-card-amber">
+                <span class="annotation-stat-kicker">Annotation Job</span>
+                <strong id="annotation-job-status" class="annotation-stat-value">Idle</strong>
+                <p id="annotation-job-copy" class="annotation-stat-copy">No annotation task is running right now.</p>
+              </article>
+            </div>
+          </section>
+
+          <section class="page-grid annotation-grid">
+            <section class="panel annotation-control-panel">
+            <div class="panel-header">
+              <div>
+                <p class="panel-kicker">Controls</p>
+                <h3>Automated annotation</h3>
+              </div>
+            </div>
+            <p id="annotation-support-copy" class="muted summary-copy">The annotation workflow currently supports GigaHands scenes.</p>
+            <div class="annotation-action-grid">
+              <button id="annotation-run-qwen-btn" class="btn btn-primary" type="button">Run Qwen Annotation</button>
+              <button id="annotation-run-gemma-btn" class="btn btn-secondary" type="button">Run Gemma Annotation</button>
+              <button id="annotation-evaluate-btn" class="btn btn-ghost" type="button">Refresh Library Evaluation</button>
+              <button id="annotation-refresh-btn" class="btn btn-ghost" type="button">Reload Annotation Data</button>
+              <button id="annotation-stop-btn" class="btn btn-ghost annotation-stop-btn" type="button">Stop Annotation Job</button>
+            </div>
+            </section>
+
+            <section class="panel annotation-artifact-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="panel-kicker">Run Artifacts</p>
+                  <h3>Available model outputs</h3>
+                </div>
+              </div>
+              <div id="annotation-runs-grid" class="annotation-run-grid"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="panel-kicker">Comparison</p>
+                  <h3>Run metrics</h3>
+                </div>
+              </div>
+              <div id="annotation-comparison" class="annotation-chart-stack"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="panel-kicker">Library Health</p>
+                  <h3>Per-label evaluation</h3>
+                </div>
+              </div>
+              <div id="annotation-library-review" class="annotation-chart-stack"></div>
+            </section>
+
+            <section class="panel panel-span-full">
+              <div class="panel-header">
+                <div>
+                  <p class="panel-kicker">Logs</p>
+                  <h3>Annotation process output</h3>
+                </div>
+              </div>
+              <div id="annotation-logs" class="log-list"></div>
+            </section>
+          </section>
+        </section>
       </section>
     </main>
   </div>

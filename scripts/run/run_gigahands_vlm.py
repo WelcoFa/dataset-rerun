@@ -29,9 +29,10 @@ import universal_label_library as label_library_lib
 DATA_ROOT = REPO_ROOT / "data" / "gigahands"
 GIGAHANDS_ROOT = DATA_ROOT / "gigahands_demo_all"
 
-SCENE_NAME = "p36-tea-0010"
-CAM_NAME = "brics-odroid-010_cam0"
-VIDEO_STEM = "brics-odroid-010_cam0_1727030430697198"
+SCENE_NAME = os.environ.get("GIGAHANDS_SCENE_NAME", "p36-tea-0010")
+CAM_NAME = os.environ.get("GIGAHANDS_CAM_NAME", "brics-odroid-010_cam0")
+FRAME_ID = os.environ.get("GIGAHANDS_FRAME_ID", "1727030430697198")
+VIDEO_STEM = os.environ.get("GIGAHANDS_VIDEO_STEM", f"{CAM_NAME}_{FRAME_ID}")
 
 VIDEO_PATH = (
     GIGAHANDS_ROOT

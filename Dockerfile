@@ -27,5 +27,6 @@ COPY app_ui ./app_ui
 COPY rerun_viz ./rerun_viz
 COPY scripts ./scripts
 COPY configs ./configs
+COPY universal_label_library.py ./
 
 CMD ["uv", "run", "python", "scripts/serve/serve_dashboard_app.py", "--app-port", "8080", "--viewer-port", "9090", "--grpc-port", "9876", "--config-dir", "/app/configs", "--outputs-dir", "/outputs"]
