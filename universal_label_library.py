@@ -148,6 +148,7 @@ def _normalize_label_entry(entry: Any) -> dict[str, Any] | None:
         "description": str(entry.get("description", "")).strip(),
         "discovered_at": entry.get("discovered_at"),
         "discovered_from_model": entry.get("discovered_from_model"),
+        "evaluation": dict(entry.get("evaluation", {})) if isinstance(entry.get("evaluation", {}), dict) else {},
     }
 
 
@@ -190,6 +191,7 @@ def _storage_payload(library: dict[str, Any]) -> dict[str, Any]:
         "labels": library.get("labels", []),
         "discoveries": library.get("discoveries", []),
         "observations": library.get("observations", []),
+        "evaluation": library.get("evaluation", {}),
     }
 
 
@@ -209,6 +211,7 @@ def load_label_library(path: Path) -> dict[str, Any]:
 
 
 def save_label_library(library: dict[str, Any], path: Path) -> None:
+    recompute_library_evaluations(library)
     library["updated_at"] = utc_now()
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -332,6 +335,7 @@ def _append_new_label(library: dict[str, Any], raw_label: str, discovered_from_m
         "description": "",
         "discovered_at": utc_now(),
         "discovered_from_model": discovered_from_model,
+        "evaluation": {},
     }
     library.setdefault("labels", []).append(new_entry)
     library["updated_at"] = utc_now()
@@ -450,10 +454,163 @@ def record_observation(
     library["updated_at"] = utc_now()
 
 
+def _round(value: float) -> float:
+    return round(value, 4)
+
+
+def _label_quality_score(usage_count: int, match_kind_counts: dict[str, int], unique_raw_variants: int) -> float | None:
+    if usage_count <= 0:
+        return None
+
+    weighted = (
+        match_kind_counts.get("exact_name", 0) * 1.0
+        + match_kind_counts.get("exact_alias", 0) * 0.95
+        + match_kind_counts.get("semantic_alias", 0) * 0.9
+        + match_kind_counts.get("similarity", 0) * 0.75
+        + match_kind_counts.get("new_label", 0) * 0.6
+    )
+    base_score = weighted / usage_count
+    if unique_raw_variants > 1:
+        base_score *= max(0.6, 1.0 - min(0.3, (unique_raw_variants - 1) * 0.05))
+    return _round(base_score)
+
+
+def recompute_library_evaluations(library: dict[str, Any]) -> dict[str, Any]:
+    observations = library.get("observations", [])
+    labels = library.get("labels", [])
+
+    known_names = {normalize_token(entry.get("name", "")) for entry in labels}
+    evaluation_rows: list[dict[str, Any]] = []
+    active_label_count = 0
+    discovered_label_count = 0
+    unused_label_count = 0
+
+    for entry in labels:
+        canonical_name = normalize_token(entry.get("name", ""))
+        if not canonical_name:
+            continue
+
+        if entry.get("status") == "discovered":
+            discovered_label_count += 1
+
+        relevant_obs = [
+            obs for obs in observations
+            if normalize_token(obs.get("canonical_label", "")) == canonical_name
+        ]
+        usage_count = len(relevant_obs)
+        if usage_count > 0:
+            active_label_count += 1
+        else:
+            unused_label_count += 1
+
+        raw_variant_counts: dict[str, int] = {}
+        match_kind_counts: dict[str, int] = {}
+        scene_counts: dict[str, int] = {}
+        run_counts: dict[str, int] = {}
+
+        for obs in relevant_obs:
+            raw_variant = normalize_token(obs.get("raw_label", ""))
+            if raw_variant:
+                raw_variant_counts[raw_variant] = raw_variant_counts.get(raw_variant, 0) + 1
+
+            match_kind = str(obs.get("match_kind") or "unknown")
+            match_kind_counts[match_kind] = match_kind_counts.get(match_kind, 0) + 1
+
+            scene_name = str(obs.get("scene_name") or "").strip()
+            if scene_name:
+                scene_counts[scene_name] = scene_counts.get(scene_name, 0) + 1
+
+            run_name = str(obs.get("run_name") or "").strip()
+            if run_name:
+                run_counts[run_name] = run_counts.get(run_name, 0) + 1
+
+        top_raw_variants = sorted(
+            raw_variant_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[:5]
+        dominant_raw_variant_count = top_raw_variants[0][1] if top_raw_variants else 0
+        unique_raw_variants = len(raw_variant_counts)
+        raw_variant_consistency = (
+            _round(dominant_raw_variant_count / usage_count) if usage_count else None
+        )
+        exact_match_rate = (
+            _round(match_kind_counts.get("exact_name", 0) / usage_count) if usage_count else None
+        )
+        alias_match_rate = (
+            _round(match_kind_counts.get("exact_alias", 0) / usage_count) if usage_count else None
+        )
+        semantic_match_rate = (
+            _round(match_kind_counts.get("semantic_alias", 0) / usage_count) if usage_count else None
+        )
+        similarity_match_rate = (
+            _round(match_kind_counts.get("similarity", 0) / usage_count) if usage_count else None
+        )
+        label_quality_score = _label_quality_score(usage_count, match_kind_counts, unique_raw_variants)
+
+        needs_review = (
+            usage_count > 0 and (
+                unique_raw_variants >= 4
+                or (similarity_match_rate is not None and similarity_match_rate >= 0.35)
+                or (raw_variant_consistency is not None and raw_variant_consistency < 0.6)
+            )
+        )
+
+        evaluation = {
+            "usage_count": usage_count,
+            "unique_scene_count": len(scene_counts),
+            "unique_run_count": len(run_counts),
+            "unique_raw_variant_count": unique_raw_variants,
+            "top_raw_variants": [
+                {"raw_label": raw_label, "count": count}
+                for raw_label, count in top_raw_variants
+            ],
+            "match_kind_counts": dict(sorted(match_kind_counts.items())),
+            "exact_match_rate": exact_match_rate,
+            "alias_match_rate": alias_match_rate,
+            "semantic_match_rate": semantic_match_rate,
+            "similarity_match_rate": similarity_match_rate,
+            "raw_variant_consistency": raw_variant_consistency,
+            "label_quality_score": label_quality_score,
+            "needs_review": needs_review,
+        }
+        entry["evaluation"] = evaluation
+        evaluation_rows.append(
+            {
+                "name": canonical_name,
+                "status": entry.get("status", "seeded"),
+                **evaluation,
+            }
+        )
+
+    discovered_candidates = sorted(
+        {
+            normalize_token(obs.get("raw_label", ""))
+            for obs in observations
+            if str(obs.get("match_kind") or "") == "new_label"
+            and normalize_token(obs.get("raw_label", ""))
+            and normalize_token(obs.get("raw_label", "")) not in known_names
+        }
+    )
+
+    library["evaluation"] = {
+        "recorded_at": utc_now(),
+        "total_labels": len(labels),
+        "active_label_count": active_label_count,
+        "unused_label_count": unused_label_count,
+        "discovered_label_count": discovered_label_count,
+        "total_observations": len(observations),
+        "labels_needing_review": [row["name"] for row in evaluation_rows if row["needs_review"]],
+        "discovered_candidates": discovered_candidates,
+        "label_rows": evaluation_rows,
+    }
+    return library["evaluation"]
+
+
 def summarize_library(library: dict[str, Any] | None) -> dict[str, Any] | None:
     if library is None:
         return None
 
+    evaluation = recompute_library_evaluations(library)
     labels = library.get("labels", [])
     discoveries = library.get("discoveries", [])
     observations = library.get("observations", [])
@@ -465,5 +622,8 @@ def summarize_library(library: dict[str, Any] | None) -> dict[str, Any] | None:
         "discovered_label_count": len({name for name in discovered_names if name}),
         "observation_count": len(observations),
         "canonical_labels": [entry["name"] for entry in labels],
+        "active_label_count": evaluation.get("active_label_count"),
+        "unused_label_count": evaluation.get("unused_label_count"),
+        "labels_needing_review": evaluation.get("labels_needing_review", []),
         "updated_at": library.get("updated_at"),
     }

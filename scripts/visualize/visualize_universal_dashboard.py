@@ -70,10 +70,27 @@ def resolve_gigahands_mesh_path(gigahands_root: Path, seq_name: str) -> Path:
     return pose_dir / "teapot_with_lid.obj"
 
 
+def import_optional_module(*module_names: str):
+    last_exc = None
+    for module_name in module_names:
+        try:
+            return importlib.import_module(module_name)
+        except ModuleNotFoundError as exc:
+            if exc.name != module_name:
+                raise
+            last_exc = exc
+    if last_exc is not None:
+        raise last_exc
+    raise ModuleNotFoundError("No module names were provided")
+
+
 class GigahandsAdapter:
     def __init__(self, args):
         self.args = args
-        self.mod = importlib.import_module("visualize_gigahands_eval")
+        self.mod = import_optional_module(
+            "visualize_gigahands_eval",
+            "scripts.experimental.gigahands.visualize_gigahands_eval",
+        )
         self.base = "universal/gigahands"
         self.viewer_name = "universal_gigahands_dashboard"
 

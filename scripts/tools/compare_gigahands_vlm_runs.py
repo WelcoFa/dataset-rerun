@@ -335,7 +335,7 @@ def build_label_library(
     right_raw_clips: list[dict[str, Any]],
     existing_library: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    library = existing_library if existing_library is not None else label_library_lib.default_library()
+    library = existing_library if existing_library is not None else label_library_lib.default_label_library()
 
     def ingest(run_name: str, raw_clips: list[dict[str, Any]]) -> None:
         for item in raw_clips:
@@ -360,9 +360,9 @@ def build_label_library(
     ingest(right_name, right_raw_clips)
 
     new_labels = [
-        entry["label"]
+        entry["name"]
         for entry in library.get("labels", [])
-        if isinstance(entry, dict) and entry.get("created_from") == "discovered"
+        if isinstance(entry, dict) and entry.get("status") == "discovered"
     ]
     library["new_labels"] = new_labels
     library["summary"] = label_library_lib.summarize_library(library)

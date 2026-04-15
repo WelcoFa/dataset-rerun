@@ -14,7 +14,11 @@ def _ensure_scripts_on_path():
     repo_root = Path(__file__).resolve().parents[2]
     scripts_dir = repo_root / "scripts"
     visualize_dir = scripts_dir / "visualize"
-    for path in (scripts_dir, visualize_dir):
+    experimental_dir = scripts_dir / "experimental"
+    candidate_paths = [scripts_dir, visualize_dir, experimental_dir]
+    if experimental_dir.exists():
+        candidate_paths.extend(path for path in experimental_dir.iterdir() if path.is_dir())
+    for path in candidate_paths:
         if str(path) not in sys.path:
             sys.path.insert(0, str(path))
 
