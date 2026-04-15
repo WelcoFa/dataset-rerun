@@ -2,6 +2,7 @@ import json
 import math
 import os
 import re
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,13 +14,18 @@ import torch
 from PIL import Image
 from transformers import AutoProcessor
 
+BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+import universal_label_library as label_library_lib
+
 
 # ============================================================
 # Config
 # ============================================================
 
-BASE_DIR = Path(__file__).resolve().parent
-REPO_ROOT = BASE_DIR.parents[1]
 DATA_ROOT = REPO_ROOT / "data" / "gigahands"
 GIGAHANDS_ROOT = DATA_ROOT / "gigahands_demo_all"
 
@@ -79,6 +85,24 @@ CANONICAL_LABELS = [
     "other",
 ]
 
+LABEL_LIBRARY_PATH = Path(
+    os.environ.get("GIGAHANDS_LABEL_LIBRARY_PATH", str(REPO_ROOT / "data" / "universal_label_library.json"))
+)
+LABEL_LIBRARY_AUTO_APPEND = os.environ.get("GIGAHANDS_LABEL_LIBRARY_AUTO_APPEND", "1") != "0"
+LABEL_LIBRARY_SIMILARITY_THRESHOLD = float(os.environ.get("GIGAHANDS_LABEL_LIBRARY_SIMILARITY_THRESHOLD", "0.86"))
+LABEL_LIBRARY_MAX_PROMPT_LABELS = int(os.environ.get("GIGAHANDS_LABEL_LIBRARY_MAX_PROMPT_LABELS", "24"))
+
+ACTIVE_LABEL_LIBRARY: Optional[dict[str, Any]] = None
+
+
+def set_active_label_library(library: Optional[dict[str, Any]]) -> None:
+    global ACTIVE_LABEL_LIBRARY
+    ACTIVE_LABEL_LIBRARY = library
+
+
+def get_active_label_library() -> Optional[dict[str, Any]]:
+    return ACTIVE_LABEL_LIBRARY
+
 
 def infer_main_task(scene_name: str) -> str:
     scene = scene_name.lower()
@@ -87,8 +111,6 @@ def infer_main_task(scene_name: str) -> str:
     if "boxing" in scene:
         return "Interacting with a boxing bag"
     return "Hand-object manipulation"
-
-
 # ============================================================
 # Data structures
 # ============================================================
@@ -220,8 +242,19 @@ def sample_video_clips_in_memory(
 # Prompt / parsing
 # ============================================================
 
-def make_prompt(scene_name: str, start_frame: int, end_frame: int) -> str:
-    labels_text = ", ".join(CANONICAL_LABELS)
+def make_prompt(
+    scene_name: str,
+    start_frame: int,
+    end_frame: int,
+    label_library: Optional[dict[str, Any]] = None,
+) -> str:
+    active_library = label_library or get_active_label_library()
+    labels_text = label_library_lib.build_prompt_label_block(
+        active_library,
+        max_labels=LABEL_LIBRARY_MAX_PROMPT_LABELS,
+    )
+    if not labels_text:
+        labels_text = "\n".join(f"- {label}" for label in CANONICAL_LABELS)
     return f"""
 You are annotating an egocentric hand-object interaction clip from the GigaHands dataset.
 
@@ -231,14 +264,16 @@ Clip frame range: {start_frame} to {end_frame}
 Task:
 1. Treat the images as one short action clip.
 2. Focus only on the clip-specific semantics. The overall scene task is known already.
-3. Choose exactly ONE label from this closed vocabulary:
-   [{labels_text}]
+3. Choose exactly ONE label from the universal label library below.
+   Prefer an existing library label over inventing a near-synonym.
+{labels_text}
 4. Focus on the dominant hand-object action in this clip.
 5. sub_task should name the current phase in 3 to 8 words, such as "pouring tea into the mug".
 6. interaction should be one concise sentence describing the hand-object roles if visible.
 7. objects must be a JSON list of visible manipulated objects only. Avoid generic words like "scene", "hand", or "object".
 8. current_action should be one concise sentence that clearly describes what is happening in this clip.
-9. If uncertain, choose the closest label. Use "other" only when no label fits.
+9. If uncertain, choose the closest label from the library. Use "other" only when no label fits and no library label is close.
+10. If no existing label or alias fits the meaning, invent one short new label.
 
 Return STRICT JSON only:
 {{
@@ -265,45 +300,14 @@ def extract_json_block(text: str) -> Optional[str]:
     return None
 
 
-def normalize_label(label: str) -> str:
-    if not label:
-        return "other"
-
-    x = label.strip().lower()
-
-    direct_map = {
-        "approach": "approach",
-        "touch": "touch",
-        "grasp": "grasp",
-        "hold": "hold",
-        "lift": "lift",
-        "move": "move",
-        "place": "place",
-        "release": "release",
-        "manipulate": "manipulate",
-        "other": "other",
-    }
-    if x in direct_map:
-        return direct_map[x]
-
-    synonym_rules = [
-        (["reach", "reaches", "reaching", "approach", "approaches"], "approach"),
-        (["touch", "touches", "contact"], "touch"),
-        (["grasp", "grasps", "grab", "grabs", "grabbing", "pick up"], "grasp"),
-        (["hold", "holds", "holding"], "hold"),
-        (["lift", "lifts", "lifting", "raise", "raises"], "lift"),
-        (["move", "moves", "moving", "pull", "pulls", "slide", "slides"], "move"),
-        (["place", "places", "set down", "put down", "puts down"], "place"),
-        (["release", "releases", "let go"], "release"),
-        (["manipulate", "rotates", "rotate", "adjust", "open", "close"], "manipulate"),
-    ]
-
-    for keys, target in synonym_rules:
-        for k in keys:
-            if k in x:
-                return target
-
-    return "other"
+def normalize_label(label: str, label_library: Optional[dict[str, Any]] = None) -> Tuple[str, Dict[str, Any]]:
+    resolved = label_library_lib.resolve_label(
+        label,
+        label_library or get_active_label_library(),
+        auto_append_new_labels=False,
+        similarity_threshold=LABEL_LIBRARY_SIMILARITY_THRESHOLD,
+    )
+    return str(resolved["resolved_label"]), resolved
 
 
 def extract_step_text(value: Any) -> str:
@@ -507,6 +511,7 @@ def parse_model_json(
     raw_text: str,
     scene_name: str,
     scene_registry: Optional[List[Dict[str, Any]]] = None,
+    label_library: Optional[dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     raw_text = raw_text.strip()
     json_block = extract_json_block(raw_text)
@@ -522,12 +527,12 @@ def parse_model_json(
         except Exception:
             data = {}
 
-    label_source = choose_best_text(
+    raw_label_source = choose_best_text(
         data.get("label", ""),
         partial_fields.get("label", ""),
         embedded_fields.get("label", ""),
     )
-    label = normalize_label(label_source)
+    label, label_resolution = normalize_label(raw_label_source, label_library=label_library)
 
     current_action = choose_best_text(
         data.get("current_action", ""),
@@ -570,6 +575,10 @@ def parse_model_json(
         "interaction": interaction,
         "objects": objects,
         "label": label,
+        "raw_label": label_resolution.get("raw_label_normalized", label_resolution.get("raw_label", "")),
+        "label_match_kind": label_resolution.get("match_kind"),
+        "label_match_score": label_resolution.get("match_score"),
+        "label_id": label_resolution.get("label_id"),
         "current_action": current_action,
         "text": current_action,
         "parse_ok": parse_ok,
@@ -634,8 +643,12 @@ def load_model_and_processor(model_id: str):
 # Batched inference
 # ============================================================
 
-def build_messages_for_clip(clip: ClipInfo, scene_name: str) -> List[Dict[str, Any]]:
-    prompt = make_prompt(scene_name, clip.start_frame, clip.end_frame)
+def build_messages_for_clip(
+    clip: ClipInfo,
+    scene_name: str,
+    label_library: Optional[dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    prompt = make_prompt(scene_name, clip.start_frame, clip.end_frame, label_library=label_library)
 
     content = []
     for img in clip.sampled_images:
@@ -657,6 +670,7 @@ def run_qwen_batch(
     batch_clips: List[ClipInfo],
     scene_name: str,
     scene_registry: Optional[List[Dict[str, Any]]] = None,
+    label_library: Optional[dict[str, Any]] = None,
 ) -> List[Tuple[str, Dict[str, Any]]]:
     try:
         from qwen_vl_utils import process_vision_info
@@ -666,7 +680,7 @@ def run_qwen_batch(
             "Install the VLM extras first with `uv sync --extra gigahands-vlm`."
         ) from exc
 
-    messages_list = [build_messages_for_clip(clip, scene_name) for clip in batch_clips]
+    messages_list = [build_messages_for_clip(clip, scene_name, label_library=label_library) for clip in batch_clips]
 
     texts = [
         processor.apply_chat_template(
@@ -721,6 +735,7 @@ def run_qwen_batch(
             decoded,
             scene_name=scene_name,
             scene_registry=scene_registry,
+            label_library=label_library,
         )
         outputs.append((decoded, parsed))
 
@@ -832,7 +847,10 @@ def save_run_meta(
     raw_output_path: Path,
     steps_output_path: Path,
     runner_name: str,
+    label_library_path: Optional[Path] = None,
+    label_library: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
+    label_library_summary = label_library_lib.summarize_library(label_library) if label_library is not None else None
     meta: dict[str, Any] = {
         "runner_name": runner_name,
         "model_id": model_id,
@@ -857,6 +875,11 @@ def save_run_meta(
         "total_time_seconds": round(total_time_seconds, 4),
         "raw_output_path": str(raw_output_path),
         "steps_output_path": str(steps_output_path),
+        "label_library_path": str(label_library_path) if label_library_path is not None else None,
+        "label_library_auto_append": LABEL_LIBRARY_AUTO_APPEND,
+        "label_library_similarity_threshold": LABEL_LIBRARY_SIMILARITY_THRESHOLD,
+        "label_library_max_prompt_labels": LABEL_LIBRARY_MAX_PROMPT_LABELS,
+        "label_library_summary": label_library_summary,
     }
     meta.update(get_peak_vram_stats())
     with open(output_path, "w", encoding="utf-8") as f:
@@ -870,6 +893,8 @@ def save_run_meta(
 
 def main():
     effective_batch_size = BATCH_SIZE if torch.cuda.is_available() else 1
+    label_library = label_library_lib.load_label_library(LABEL_LIBRARY_PATH)
+    set_active_label_library(label_library)
 
     print("=== run_vlm_gigahands_fast.py ===")
     print("SCENE_NAME        =", SCENE_NAME)
@@ -883,6 +908,8 @@ def main():
     print("BATCH_SIZE        =", effective_batch_size)
     print("MAX_NEW_TOKENS    =", MAX_NEW_TOKENS)
     print("MAX_IMAGE_EDGE    =", MAX_IMAGE_EDGE)
+    print("LABEL_LIBRARY     =", LABEL_LIBRARY_PATH)
+    print("LABEL_LIBRARY_ENTRIES =", label_library_lib.library_size(label_library))
     print()
 
     if not VIDEO_PATH.exists():
@@ -925,6 +952,7 @@ def main():
             batch_clips=batch,
             scene_name=SCENE_NAME,
             scene_registry=scene_registry,
+            label_library=label_library,
         )
         dt = time.time() - t0
         print(f"  batch_time = {dt:.2f}s")
@@ -946,6 +974,10 @@ def main():
                 "parse_ok": parsed.get("parse_ok", False),
                 "raw_response": raw_text,
                 "model_id": MODEL_ID,
+                "raw_label": parsed.get("raw_label", ""),
+                "label_match_kind": parsed.get("label_match_kind"),
+                "label_match_score": parsed.get("label_match_score"),
+                "label_id": parsed.get("label_id"),
             }
             raw_clip_preds.append(item)
 
@@ -962,6 +994,25 @@ def main():
         print()
 
     merged_steps = merge_clip_predictions(raw_clip_preds)
+
+    for item in raw_clip_preds:
+        label_library_lib.record_observation(
+            label_library,
+            raw_label=item.get("raw_label", ""),
+            canonical_label=item.get("label", "other"),
+            run_name="run_gigahands_vlm",
+            clip_id=item.get("clip_id"),
+            scene_name=SCENE_NAME,
+            raw_response=item.get("raw_response", ""),
+            sub_task=item.get("sub_task", ""),
+            interaction=item.get("interaction", ""),
+            current_action=item.get("current_action", ""),
+            match_kind=item.get("label_match_kind"),
+            auto_append_new_labels=LABEL_LIBRARY_AUTO_APPEND,
+        )
+
+    if LABEL_LIBRARY_AUTO_APPEND:
+        label_library_lib.save_label_library(label_library, LABEL_LIBRARY_PATH)
 
     with open(OUTPUT_RAW_CLIPS_PATH, "w", encoding="utf-8") as f:
         json.dump(raw_clip_preds, f, ensure_ascii=False, indent=2)
@@ -981,6 +1032,8 @@ def main():
         raw_output_path=OUTPUT_RAW_CLIPS_PATH,
         steps_output_path=OUTPUT_STEPS_PATH,
         runner_name="run_gigahands_vlm",
+        label_library_path=LABEL_LIBRARY_PATH,
+        label_library=label_library,
     )
 
     print("Saved raw clip predictions to:")

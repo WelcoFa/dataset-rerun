@@ -1,6 +1,8 @@
 import json
 import os
+import sys
 import time
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 try:
@@ -21,7 +23,13 @@ except ImportError as exc:  # pragma: no cover - import guard
         "`uv run --extra gigahands-vlm python scripts/run/run_gigahands_gemma4_vlm.py`."
     ) from exc
 
+BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 import run_gigahands_vlm as base
+import universal_label_library as label_library_lib
 
 try:
     from transformers import AutoModelForImageTextToText as GemmaAutoModel
@@ -43,6 +51,10 @@ OUTPUT_RUN_META_PATH = base.OUTPUT_DIR / f"pred_run_meta_{base.SCENE_NAME}_{OUTP
 BATCH_SIZE = int(os.environ.get("GIGAHANDS_GEMMA4_BATCH_SIZE", "1"))
 MAX_NEW_TOKENS = int(os.environ.get("GIGAHANDS_GEMMA4_MAX_NEW_TOKENS", str(base.MAX_NEW_TOKENS)))
 USE_SDPA = os.environ.get("GIGAHANDS_GEMMA4_USE_SDPA", "1") != "0"
+LABEL_LIBRARY_PATH = Path(
+    os.environ.get("GIGAHANDS_LABEL_LIBRARY_PATH", str(base.REPO_ROOT / "data" / "universal_label_library.json"))
+)
+LABEL_LIBRARY_AUTO_APPEND = os.environ.get("GIGAHANDS_LABEL_LIBRARY_AUTO_APPEND", "1") != "0"
 
 
 def get_torch_dtype() -> torch.dtype:
@@ -80,8 +92,12 @@ def load_model_and_processor(model_id: str) -> Tuple[torch.nn.Module, AutoProces
     return model, processor
 
 
-def build_messages_for_clip(clip: base.ClipInfo, scene_name: str) -> List[Dict[str, object]]:
-    prompt = base.make_prompt(scene_name, clip.start_frame, clip.end_frame)
+def build_messages_for_clip(
+    clip: base.ClipInfo,
+    scene_name: str,
+    label_library: Optional[dict[str, object]] = None,
+) -> List[Dict[str, object]]:
+    prompt = base.make_prompt(scene_name, clip.start_frame, clip.end_frame, label_library=label_library)
     content: List[Dict[str, object]] = []
     for img in clip.sampled_images:
         content.append({"type": "image", "image": img})
@@ -95,11 +111,12 @@ def run_gemma_batch(
     batch_clips: List[base.ClipInfo],
     scene_name: str,
     scene_registry: Optional[List[Dict[str, object]]] = None,
+    label_library: Optional[dict[str, object]] = None,
 ) -> List[Tuple[str, Dict[str, object]]]:
     outputs: List[Tuple[str, Dict[str, object]]] = []
 
     for clip in batch_clips:
-        messages = build_messages_for_clip(clip, scene_name)
+        messages = build_messages_for_clip(clip, scene_name, label_library=label_library)
         inputs = processor.apply_chat_template(
             messages,
             tokenize=True,
@@ -130,6 +147,7 @@ def run_gemma_batch(
             decoded,
             scene_name=scene_name,
             scene_registry=scene_registry,
+            label_library=label_library,
         )
         outputs.append((decoded, parsed))
 
@@ -138,6 +156,8 @@ def run_gemma_batch(
 
 def main() -> None:
     effective_batch_size = max(1, BATCH_SIZE)
+    label_library = label_library_lib.load_label_library(LABEL_LIBRARY_PATH)
+    base.set_active_label_library(label_library)
 
     print("=== run_gigahands_gemma4_vlm.py ===")
     print("SCENE_NAME         =", base.SCENE_NAME)
@@ -151,6 +171,8 @@ def main() -> None:
     print("BATCH_SIZE         =", effective_batch_size)
     print("MAX_NEW_TOKENS     =", MAX_NEW_TOKENS)
     print("MAX_IMAGE_EDGE     =", base.MAX_IMAGE_EDGE)
+    print("LABEL_LIBRARY      =", LABEL_LIBRARY_PATH)
+    print("LABEL_LIBRARY_ENTRIES =", label_library_lib.library_size(label_library))
     print()
 
     if not base.VIDEO_PATH.exists():
@@ -193,6 +215,7 @@ def main() -> None:
             batch_clips=batch,
             scene_name=base.SCENE_NAME,
             scene_registry=scene_registry,
+            label_library=label_library,
         )
         dt = time.time() - t0
         print(f"  batch_time = {dt:.2f}s")
@@ -214,6 +237,10 @@ def main() -> None:
                 "parse_ok": parsed.get("parse_ok", False),
                 "raw_response": raw_text,
                 "model_id": MODEL_ID,
+                "raw_label": parsed.get("raw_label", ""),
+                "label_match_kind": parsed.get("label_match_kind"),
+                "label_match_score": parsed.get("label_match_score"),
+                "label_id": parsed.get("label_id"),
             }
             raw_clip_preds.append(item)
 
@@ -230,6 +257,25 @@ def main() -> None:
         print()
 
     merged_steps = base.merge_clip_predictions(raw_clip_preds)
+
+    for item in raw_clip_preds:
+        label_library_lib.record_observation(
+            label_library,
+            raw_label=item.get("raw_label", ""),
+            canonical_label=item.get("label", "other"),
+            run_name="run_gigahands_gemma4_vlm",
+            clip_id=item.get("clip_id"),
+            scene_name=base.SCENE_NAME,
+            raw_response=item.get("raw_response", ""),
+            sub_task=item.get("sub_task", ""),
+            interaction=item.get("interaction", ""),
+            current_action=item.get("current_action", ""),
+            match_kind=item.get("label_match_kind"),
+            auto_append_new_labels=LABEL_LIBRARY_AUTO_APPEND,
+        )
+
+    if LABEL_LIBRARY_AUTO_APPEND:
+        label_library_lib.save_label_library(label_library, LABEL_LIBRARY_PATH)
 
     with open(OUTPUT_RAW_CLIPS_PATH, "w", encoding="utf-8") as f:
         json.dump(raw_clip_preds, f, ensure_ascii=False, indent=2)
@@ -249,6 +295,8 @@ def main() -> None:
         raw_output_path=OUTPUT_RAW_CLIPS_PATH,
         steps_output_path=OUTPUT_STEPS_PATH,
         runner_name="run_gigahands_gemma4_vlm",
+        label_library_path=LABEL_LIBRARY_PATH,
+        label_library=label_library,
     )
 
     print("Saved raw clip predictions to:")

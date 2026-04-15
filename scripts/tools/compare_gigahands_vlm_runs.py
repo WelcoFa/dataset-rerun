@@ -3,12 +3,17 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+import universal_label_library as label_library_lib
+
 DEFAULT_ANNOTATIONS_DIR = REPO_ROOT / "data" / "gigahands" / "annotations"
 CANONICAL_LABELS = {
     "approach",
@@ -56,8 +61,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--existing-label-library",
         type=Path,
-        default=None,
-        help="Optional existing label library JSON used to flag newly discovered labels.",
+        default=REPO_ROOT / "data" / "universal_label_library.json",
+        help="Existing universal label library JSON used to flag newly discovered labels.",
     )
     return parser.parse_args()
 
@@ -109,13 +114,33 @@ def normalize_object_name(value: str) -> str:
     return " ".join(str(value or "").strip().lower().split())
 
 
-def evaluate_validity(item: dict[str, Any]) -> dict[str, Any]:
+def label_vocab_from_library(library: dict[str, Any] | None) -> set[str]:
+    if library is None:
+        return set(CANONICAL_LABELS)
+    label_index = library.get("label_index", {})
+    if isinstance(label_index, dict) and label_index:
+        return {label_library_lib.normalize_label_text(label) for label in label_index.keys() if label_library_lib.normalize_label_text(label)}
+    labels: set[str] = set()
+    for entry in library.get("labels", []):
+        if not isinstance(entry, dict):
+            continue
+        label = label_library_lib.normalize_label_text(entry.get("label", ""))
+        if label:
+            labels.add(label)
+        for alias in entry.get("aliases", []):
+            alias_norm = label_library_lib.normalize_label_text(alias)
+            if alias_norm:
+                labels.add(alias_norm)
+    return labels or set(CANONICAL_LABELS)
+
+
+def evaluate_validity(item: dict[str, Any], *, label_vocab: set[str]) -> dict[str, Any]:
     objects = item.get("objects", [])
     normalized_objects = [normalize_object_name(obj) for obj in objects if normalize_object_name(obj)]
     unique_objects = list(dict.fromkeys(normalized_objects))
     checks = {
         "parse_ok": bool(item.get("parse_ok", False)),
-        "label_in_vocab": item.get("label") in CANONICAL_LABELS,
+        "label_in_vocab": label_library_lib.normalize_label_text(item.get("label", "")) in label_vocab,
         "main_task_ok": is_meaningful_text(item.get("main_task", ""), min_words=3),
         "sub_task_ok": is_meaningful_text(item.get("sub_task", ""), min_words=2),
         "interaction_ok": is_meaningful_text(item.get("interaction", ""), min_words=3),
@@ -179,7 +204,13 @@ def round_or_none(value: float | None, digits: int = 4) -> float | None:
     return round(value, digits)
 
 
-def summarize_run(raw_clips: list[dict[str, Any]], steps: list[dict[str, Any]], run_meta: dict[str, Any]) -> dict[str, Any]:
+def summarize_run(
+    raw_clips: list[dict[str, Any]],
+    steps: list[dict[str, Any]],
+    run_meta: dict[str, Any],
+    *,
+    label_vocab: set[str],
+) -> dict[str, Any]:
     enriched = []
     warning_counts: Counter[str] = Counter()
     label_distribution: Counter[str] = Counter()
@@ -196,13 +227,13 @@ def summarize_run(raw_clips: list[dict[str, Any]], steps: list[dict[str, Any]], 
     previous_objects: set[str] | None = None
 
     for item in raw_clips:
-        validity = evaluate_validity(item)
+        validity = evaluate_validity(item, label_vocab=label_vocab)
         enriched.append(validity)
         canonical_label = str(item.get("label", "unknown"))
         label_distribution[canonical_label] += 1
         warning_counts.update(validity["warnings"])
-        raw_label = extract_raw_label(str(item.get("raw_response", "")))
-        if raw_label is not None:
+        raw_label = str(item.get("raw_label") or extract_raw_label(str(item.get("raw_response", ""))) or "")
+        if raw_label:
             raw_label_distribution[raw_label] += 1
             raw_label_alignment.append(1.0 if raw_label == canonical_label else 0.0)
 
@@ -267,10 +298,10 @@ def summarize_run(raw_clips: list[dict[str, Any]], steps: list[dict[str, Any]], 
         ),
         "canonical_label_rate": rates.get("label_in_vocab"),
         "raw_label_in_library_rate": round_or_none(
-            sum(count for label, count in raw_label_distribution.items() if label in CANONICAL_LABELS) / sum(raw_label_distribution.values())
+            sum(count for label, count in raw_label_distribution.items() if label in label_vocab) / sum(raw_label_distribution.values())
         ) if raw_label_distribution else None,
         "new_raw_label_rate": round_or_none(
-            sum(count for label, count in raw_label_distribution.items() if label not in CANONICAL_LABELS) / sum(raw_label_distribution.values())
+            sum(count for label, count in raw_label_distribution.items() if label not in label_vocab) / sum(raw_label_distribution.values())
         ) if raw_label_distribution else None,
         "raw_to_canonical_alignment_rate": round_or_none(mean(raw_label_alignment)),
         "other_rate": round_or_none(label_distribution.get("other", 0) / len(raw_clips) if raw_clips else 0.0),
@@ -304,66 +335,38 @@ def build_label_library(
     right_raw_clips: list[dict[str, Any]],
     existing_library: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    entries: dict[str, dict[str, Any]] = {}
-    known_labels = set(CANONICAL_LABELS)
-    if existing_library:
-        known_labels.update(existing_library.get("known_labels", []))
-        known_labels.update(existing_library.get("canonical_labels", []))
-        known_labels.update(existing_library.get("raw_labels", {}).keys())
+    library = existing_library if existing_library is not None else label_library_lib.default_library()
 
     def ingest(run_name: str, raw_clips: list[dict[str, Any]]) -> None:
         for item in raw_clips:
-            raw_label = extract_raw_label(str(item.get("raw_response", "")))
+            raw_label = str(item.get("raw_label") or extract_raw_label(str(item.get("raw_response", ""))) or "")
             if not raw_label:
                 continue
-            entry = entries.setdefault(
-                raw_label,
-                {
-                    "raw_label": raw_label,
-                    "canonical_label_counts": {},
-                    "runs": {},
-                    "example_clips": [],
-                    "in_canonical_library": raw_label in CANONICAL_LABELS,
-                    "is_new_vs_existing_library": raw_label not in known_labels,
-                },
+            label_library_lib.record_observation(
+                library,
+                raw_label=raw_label,
+                canonical_label=item.get("label", "other"),
+                run_name=run_name,
+                clip_id=item.get("clip_id"),
+                scene_name=item.get("scene_name"),
+                raw_response=item.get("raw_response"),
+                sub_task=item.get("sub_task"),
+                interaction=item.get("interaction"),
+                current_action=item.get("current_action"),
+                match_kind=item.get("label_match_kind"),
             )
-            canonical_label = str(item.get("label", "unknown"))
-            canonical_counts = Counter(entry["canonical_label_counts"])
-            canonical_counts[canonical_label] += 1
-            entry["canonical_label_counts"] = dict(sorted(canonical_counts.items()))
-
-            runs = entry["runs"]
-            run_entry = runs.setdefault(run_name, {"count": 0, "clip_ids": []})
-            run_entry["count"] += 1
-            run_entry["clip_ids"].append(item.get("clip_id"))
-
-            if len(entry["example_clips"]) < 3:
-                entry["example_clips"].append(
-                    {
-                        "run": run_name,
-                        "clip_id": item.get("clip_id"),
-                        "canonical_label": canonical_label,
-                        "sub_task": item.get("sub_task"),
-                    }
-                )
 
     ingest(left_name, left_raw_clips)
     ingest(right_name, right_raw_clips)
 
-    for entry in entries.values():
-        counts = Counter(entry["canonical_label_counts"])
-        dominant_label, dominant_count = counts.most_common(1)[0]
-        total = sum(counts.values())
-        entry["dominant_canonical_label"] = dominant_label
-        entry["dominant_canonical_rate"] = round(dominant_count / total, 4)
-        entry["total_count"] = total
-
-    return {
-        "canonical_labels": sorted(CANONICAL_LABELS),
-        "known_labels": sorted(known_labels),
-        "new_labels": sorted(label for label, entry in entries.items() if entry["is_new_vs_existing_library"]),
-        "raw_labels": dict(sorted(entries.items())),
-    }
+    new_labels = [
+        entry["label"]
+        for entry in library.get("labels", [])
+        if isinstance(entry, dict) and entry.get("created_from") == "discovered"
+    ]
+    library["new_labels"] = new_labels
+    library["summary"] = label_library_lib.summarize_library(library)
+    return library
 
 
 def format_value(value: Any) -> str:
@@ -458,7 +461,8 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     right_steps = load_json(right_paths["steps"])
     left_meta = load_json(left_paths["meta"])
     right_meta = load_json(right_paths["meta"])
-    existing_library = load_json(args.existing_label_library) if args.existing_label_library else None
+    existing_library = label_library_lib.load_label_library(args.existing_label_library) if args.existing_label_library else None
+    baseline_label_vocab = label_vocab_from_library(existing_library)
 
     report = {
         "scene_name": scene_name,
@@ -467,13 +471,13 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "name": args.left_name,
             "tag": args.left_tag,
             "paths": {k: str(v) for k, v in left_paths.items()},
-            "summary": summarize_run(left_raw, left_steps, left_meta),
+            "summary": summarize_run(left_raw, left_steps, left_meta, label_vocab=baseline_label_vocab),
         },
         "right": {
             "name": args.right_name,
             "tag": args.right_tag,
             "paths": {k: str(v) for k, v in right_paths.items()},
-            "summary": summarize_run(right_raw, right_steps, right_meta),
+            "summary": summarize_run(right_raw, right_steps, right_meta, label_vocab=baseline_label_vocab),
         },
         "label_library": build_label_library(
             left_name=args.left_name,
@@ -516,8 +520,8 @@ def main() -> None:
 
     print()
     print("Discovered label library:")
-    print(report["label_library"]["raw_labels"].keys())
-    if report["label_library"]["new_labels"]:
+    print(report["label_library"]["canonical_labels"])
+    if report["label_library"].get("new_labels"):
         print(f"New labels vs library: {report['label_library']['new_labels']}")
 
     if args.json_out is not None:
@@ -529,8 +533,7 @@ def main() -> None:
 
     if args.label_library_out is not None:
         args.label_library_out.parent.mkdir(parents=True, exist_ok=True)
-        with open(args.label_library_out, "w", encoding="utf-8") as f:
-            json.dump(report["label_library"], f, ensure_ascii=False, indent=2)
+        label_library_lib.save_label_library(report["label_library"], args.label_library_out)
         print(f"Saved label library to: {args.label_library_out}")
 
 
