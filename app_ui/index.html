@@ -258,12 +258,9 @@
                     <h3>Launch controls</h3>
                   </div>
                 </div>
-                <label class="toggle-row">
-                  <input id="save-recording-toggle" type="checkbox">
-                  <span>Save `.rrd` on next launch</span>
-                </label>
                 <div class="action-stack">
                   <button id="launch-btn" class="btn btn-primary" type="button">Launch Selected</button>
+                  <button id="open-annotation-btn" class="btn btn-secondary" type="button">Open in Annotation</button>
                   <button id="stop-btn" class="btn btn-secondary" type="button">Stop Current</button>
                   <button id="refresh-btn" class="btn btn-ghost" type="button">Refresh Data</button>
                 </div>
@@ -412,8 +409,7 @@
             </div>
             <p id="annotation-support-copy" class="muted summary-copy">The annotation workflow currently supports GigaHands scenes.</p>
             <div class="annotation-action-grid">
-              <button id="annotation-run-qwen-btn" class="btn btn-primary" type="button">Run Qwen Annotation</button>
-              <button id="annotation-run-gemma-btn" class="btn btn-secondary" type="button">Run Gemma Annotation</button>
+              <button id="annotation-return-library-btn" class="btn btn-ghost" type="button">Return to Library</button>
               <button id="annotation-evaluate-btn" class="btn btn-ghost" type="button">Refresh Library Evaluation</button>
               <button id="annotation-refresh-btn" class="btn btn-ghost" type="button">Reload Annotation Data</button>
               <button id="annotation-stop-btn" class="btn btn-ghost annotation-stop-btn" type="button">Stop Annotation Job</button>
@@ -448,16 +444,6 @@
                 </div>
               </div>
               <div id="annotation-library-review" class="annotation-chart-stack"></div>
-            </section>
-
-            <section class="panel panel-span-full">
-              <div class="panel-header">
-                <div>
-                  <p class="panel-kicker">Logs</p>
-                  <h3>Annotation process output</h3>
-                </div>
-              </div>
-              <div id="annotation-logs" class="log-list"></div>
             </section>
           </section>
         </section>

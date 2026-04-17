@@ -14,7 +14,6 @@ const state = {
   processRunning: false,
   lastError: null,
   logs: [],
-  saveRecording: false,
   presetSearch: "",
   datasetFilter: "all",
   logSearch: "",
@@ -22,7 +21,6 @@ const state = {
   annotationStatus: "idle",
   annotationRunner: null,
   annotationStartedAt: null,
-  annotationLogs: [],
   annotationData: null,
   annotationError: null,
   annotationLoading: false,
@@ -144,6 +142,12 @@ function getRouteFromHash() {
   return ROUTES[raw] ? raw : "library";
 }
 
+function scrollPageToTop() {
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
+}
+
 function setRoute(route, replace = false) {
   const target = ROUTES[route] ? route : "library";
   const hash = `#/${target}`;
@@ -154,6 +158,7 @@ function setRoute(route, replace = false) {
   }
   state.route = target;
   renderRoute();
+  requestAnimationFrame(scrollPageToTop);
 }
 
 async function fetchJson(url, options = {}) {
@@ -559,10 +564,6 @@ function modelDisplayName(runner) {
   return titleCase(runner || "unknown");
 }
 
-function annotationCanRunAutomated(item = getSelectedItem()) {
-  return ["gigahands", "hot3d", "being-h0", "dexwild", "thermohands", "wiyh"].includes(item?.dataset);
-}
-
 function currentAnnotationContext() {
   const item = getSelectedItem();
   const scene = getSelectedScene(item);
@@ -645,7 +646,6 @@ function renderAnnotationPage() {
   const scene = context?.scene || null;
   const data = state.annotationData;
   const status = state.annotationStatus || "idle";
-  const canRunAutomated = annotationCanRunAutomated(item);
   const canInspect = Boolean(item && scene);
 
   els.annotationSelectedDataset.textContent = item?.label || "none";
@@ -664,32 +664,22 @@ function renderAnnotationPage() {
       : status === "completed"
         ? "The last annotation job completed. Reload or inspect the metrics below."
         : state.annotationError || "No annotation task is running right now.";
-  els.annotationSupportCopy.textContent = canRunAutomated
-    ? "This page uses the current Library selection. Run Qwen or Gemma for the selected dataset, refresh library evaluation, and inspect the resulting metrics."
-    : canInspect
-      ? "Saved annotations can be inspected for this dataset. Automated runs are only enabled when this dataset has a supported VLM pipeline."
-      : "Select a scene to inspect saved annotations. Automated runs are only enabled when the selected dataset has a supported VLM pipeline.";
+  els.annotationSupportCopy.textContent = canInspect
+    ? "Saved annotations can be inspected for this dataset here. Run the VLM scripts from your local terminal, then reload this page to review outputs and metrics."
+    : "Select a scene to inspect saved annotations. Run the VLM scripts from your local terminal, then reload this page to review outputs and metrics.";
 
-  const runButtonsDisabled = !canRunAutomated || !scene || state.annotationLoading || status === "running";
-  els.annotationRunQwenBtn.disabled = runButtonsDisabled;
-  els.annotationRunGemmaBtn.disabled = runButtonsDisabled;
   els.annotationStopBtn.disabled = status !== "running";
   els.annotationEvaluateBtn.disabled = state.annotationLoading;
   els.annotationRefreshBtn.disabled = state.annotationLoading;
 
   if (!canInspect || !data) {
     els.annotationRunsReady.textContent = "0";
-    els.annotationRunsCopy.textContent = canRunAutomated
-      ? "Run Qwen or Gemma to generate annotation outputs."
-      : "Select a scene to load saved annotation outputs.";
+    els.annotationRunsCopy.textContent = "Select a scene to load saved annotation outputs.";
     els.annotationLibraryCount.textContent = "0";
     els.annotationLibraryCopy.textContent = "Library evaluation will appear after loading annotation data.";
     els.annotationRunsGrid.innerHTML = '<div class="empty-state">No annotation artifacts loaded yet.</div>';
     els.annotationComparison.innerHTML = '<div class="empty-state">Run both Qwen and Gemma to compare metrics here.</div>';
     els.annotationLibraryReview.innerHTML = '<div class="empty-state">Library evaluation will appear here after loading annotation data.</div>';
-    els.annotationLogs.innerHTML = state.annotationLogs.length
-      ? state.annotationLogs.map((line) => `<div class="log-entry">${escapeHtml(line)}</div>`).join("")
-      : '<div class="empty-state">No annotation logs yet.</div>';
     return;
   }
 
@@ -796,15 +786,6 @@ function renderAnnotationPage() {
 
   const labelRows = Array.isArray(libraryEvaluation.label_rows) ? libraryEvaluation.label_rows : [];
   els.annotationLibraryReview.innerHTML = renderLibraryRows(labelRows.slice(0, 8));
-  els.annotationLogs.innerHTML = state.annotationLogs.length
-    ? state.annotationLogs
-        .map((line) => {
-          const text = String(line);
-          const isError = /(error|failed|traceback|exception)/i.test(text);
-          return `<div class="log-entry ${isError ? "error" : ""}">${escapeHtml(text)}</div>`;
-        })
-        .join("")
-    : '<div class="empty-state">No annotation logs yet.</div>';
 }
 
 function appendLog(message) {
@@ -832,7 +813,6 @@ async function refreshAnnotationData() {
     state.annotationStatus = "idle";
     state.annotationRunner = null;
     state.annotationStartedAt = null;
-    state.annotationLogs = [];
     state.annotationData = null;
     state.annotationError = null;
     return;
@@ -851,7 +831,6 @@ async function refreshAnnotationData() {
     state.annotationStatus = statusPayload.status || "idle";
     state.annotationRunner = statusPayload.runner || null;
     state.annotationStartedAt = statusPayload.started_at || null;
-    state.annotationLogs = statusPayload.logs || [];
     state.annotationError = statusPayload.last_error || null;
     state.annotationData = dataPayload;
   } catch (error) {
@@ -911,18 +890,14 @@ async function openSelected() {
       body: JSON.stringify({
         item_id: selected.id,
         scene_id: state.selectedSceneId,
-        save_recording: state.saveRecording,
+        save_recording: false,
       }),
     });
     const selectedScene =
       Array.isArray(selected.scenes) && state.selectedSceneId
         ? selected.scenes.find((scene) => scene.id === state.selectedSceneId)
         : null;
-    appendLog(
-      state.saveRecording
-        ? `Started preset ${selected.label}${selectedScene ? ` (${selectedScene.label})` : ""} with .rrd recording enabled`
-        : `Started preset ${selected.label}${selectedScene ? ` (${selectedScene.label})` : ""} in live viewer mode`,
-    );
+    appendLog(`Started preset ${selected.label}${selectedScene ? ` (${selectedScene.label})` : ""} in live viewer mode.`);
     await refreshAll();
     setRoute("viewer");
   } catch (error) {
@@ -983,7 +958,7 @@ async function switchViewerScene() {
       body: JSON.stringify({
         item_id: activeItem.id,
         scene_id: state.viewerSceneId,
-        save_recording: state.saveRecording,
+        save_recording: false,
       }),
     });
     appendLog(`Switched ${activeItem.label} to scene ${nextScene?.label || state.viewerSceneId}.`);
@@ -997,37 +972,20 @@ async function switchViewerScene() {
   }
 }
 
-async function runAnnotation(runner) {
-  const context = currentAnnotationContext();
-  if (!context) {
-    appendLog("Choose a dataset and scene before running annotation.");
+async function openInAnnotation() {
+  const selected = getSelectedItem();
+  if (!selected) {
+    appendLog("Choose a dataset before opening Annotation.");
     return;
   }
-  if (!annotationCanRunAutomated(context.item)) {
-    appendLog(`Automated annotation is not enabled for dataset ${context.item.dataset}. This page can still inspect any saved annotations.`);
-    return;
-  }
-
+  state.selectedSceneId = chooseSceneId(selected, state.selectedSceneId);
   try {
-    state.annotationLoading = true;
-    renderAnnotationPage();
-    await fetchJson("/api/annotation/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        item_id: context.item.id,
-        scene_id: context.scene.id,
-        runner,
-      }),
-    });
-    appendLog(`Started ${modelDisplayName(runner)} annotation for ${context.scene.label}.`);
-    await refreshAll();
+    await refreshAnnotationData();
   } catch (error) {
-    appendLog(`Annotation run failed: ${error.message}`);
-  } finally {
-    state.annotationLoading = false;
-    renderAnnotationPage();
+    appendLog(`Annotation refresh failed: ${error.message}`);
   }
+  setRoute("annotation");
+  renderAll();
 }
 
 async function stopAnnotation() {
@@ -1082,18 +1040,12 @@ function bindEvents() {
   els.stopBtn.addEventListener("click", () => {
     stopCurrent().catch((error) => appendLog(`Stop failed: ${error.message}`));
   });
-  els.saveRecordingToggle.addEventListener("change", (event) => {
-    state.saveRecording = event.target.checked;
-    renderStatus();
-    appendLog(
-      state.saveRecording
-        ? "Saving .rrd files is enabled for the next launch."
-        : "Launching without saving .rrd files.",
-    );
-  });
   els.presetSearch.addEventListener("input", (event) => {
     state.presetSearch = event.target.value;
     renderItems();
+  });
+  els.openAnnotationBtn.addEventListener("click", () => {
+    openInAnnotation().catch((error) => appendLog(`Open in Annotation failed: ${error.message}`));
   });
   els.sceneSelect.addEventListener("change", (event) => {
     state.selectedSceneId = event.target.value || null;
@@ -1112,12 +1064,6 @@ function bindEvents() {
     state.logSearch = event.target.value;
     renderLogs();
   });
-  els.annotationRunQwenBtn.addEventListener("click", () => {
-    runAnnotation("qwen").catch((error) => appendLog(`Annotation failed: ${error.message}`));
-  });
-  els.annotationRunGemmaBtn.addEventListener("click", () => {
-    runAnnotation("gemma4").catch((error) => appendLog(`Annotation failed: ${error.message}`));
-  });
   els.annotationStopBtn.addEventListener("click", () => {
     stopAnnotation().catch((error) => appendLog(`Stopping annotation failed: ${error.message}`));
   });
@@ -1126,6 +1072,9 @@ function bindEvents() {
   });
   els.annotationRefreshBtn.addEventListener("click", () => {
     refreshAll().catch((error) => appendLog(`Annotation refresh failed: ${error.message}`));
+  });
+  els.annotationReturnLibraryBtn.addEventListener("click", () => {
+    setRoute("library");
   });
   els.viewerFullscreenBtn.addEventListener("click", async () => {
     const viewerContainer = els.viewerFrame.closest(".panel");
@@ -1190,7 +1139,7 @@ function init() {
   els.viewerSceneDetailList = $("viewer-scene-detail-list");
   els.viewerSceneCount = $("viewer-scene-count");
   els.viewerSceneApplyBtn = $("viewer-scene-apply-btn");
-  els.saveRecordingToggle = $("save-recording-toggle");
+  els.openAnnotationBtn = $("open-annotation-btn");
   els.presetSearch = $("preset-search");
   els.logSearch = $("log-search");
   els.presetCount = $("preset-count");
@@ -1222,15 +1171,13 @@ function init() {
   els.annotationSelectedScene = $("annotation-selected-scene");
   els.annotationSelectionSummary = $("annotation-selection-summary");
   els.annotationSupportCopy = $("annotation-support-copy");
-  els.annotationRunQwenBtn = $("annotation-run-qwen-btn");
-  els.annotationRunGemmaBtn = $("annotation-run-gemma-btn");
   els.annotationStopBtn = $("annotation-stop-btn");
   els.annotationEvaluateBtn = $("annotation-evaluate-btn");
   els.annotationRefreshBtn = $("annotation-refresh-btn");
+  els.annotationReturnLibraryBtn = $("annotation-return-library-btn");
   els.annotationRunsGrid = $("annotation-runs-grid");
   els.annotationComparison = $("annotation-comparison");
   els.annotationLibraryReview = $("annotation-library-review");
-  els.annotationLogs = $("annotation-logs");
 
   state.route = getRouteFromHash();
   if (!window.location.hash) {

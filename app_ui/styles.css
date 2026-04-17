@@ -550,8 +550,7 @@ p {
 }
 
 .annotation-control-panel {
-  position: sticky;
-  top: 108px;
+  position: static;
 }
 
 .annotation-artifact-panel {
@@ -566,7 +565,7 @@ p {
 }
 
 .annotation-stop-btn {
-  grid-column: 1 / -1;
+  grid-column: auto;
 }
 
 .annotation-run-grid,

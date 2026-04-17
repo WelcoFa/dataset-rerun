@@ -37,7 +37,7 @@ RUN_MULTIDATASET_QWEN_SCRIPT = REPO_ROOT / "scripts" / "run" / "run_multidataset
 RUN_MULTIDATASET_GEMMA_SCRIPT = REPO_ROOT / "scripts" / "run" / "run_multidataset_gemma4_vlm.py"
 UNIVERSAL_LABEL_LIBRARY_PATH = REPO_ROOT / "data" / "universal_label_library.json"
 GIGAHANDS_ANNOTATIONS_DIR = REPO_ROOT / "data" / "gigahands" / "annotations"
-ANNOTATION_RUN_SUPPORTED_DATASETS = {"gigahands", "hot3d", "being-h0", "dexwild", "thermohands", "wiyh"}
+ANNOTATION_RUN_SUPPORTED_DATASETS: set[str] = set()
 
 
 @dataclass
